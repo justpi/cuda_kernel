@@ -2,6 +2,8 @@
 
 #define BLOCK_SIZE 32
 
+#define TILE 1024
+
 #define SHARED_BLOCK_SIZE 32
 
 __global__ void gemm_baseline();

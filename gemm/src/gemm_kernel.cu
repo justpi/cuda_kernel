@@ -28,6 +28,31 @@ __global__ void gemm_baseline(float* d_a, float* d_b, float* d_c, int N, int K, 
 
 }
 
+template <const int tile>
+__global__ void sgemm_tile(float* d_a, float* d_b, float* d_c, int M, int N, int K) {
+    /* 当K过大时，一个block无法存入所有值，需要对K进行分块
+       在grid上添加一维z来存储K/TILE个block，每个thread计算TILE个乘加
+    */
+    unsigned int c_i = blockDim.x * blockIdx.x + threadIdx.x;
+    unsigned int c_j = blockDim.y * blockIdx.y + threadIdx.y;
+    unsigned int tile_idx = blockIdx.z;
+
+    float output = 0.0;
+    size_t a_idx, b_idx;
+
+    if (c_i < M && c_j < N) {
+        #pragma unroll
+        for (int k=0; k < tile; ++k) {
+            a_idx = c_i * K + k + tile_idx * tile;
+            b_idx = (k + tile_idx * tile) * N + c_j;
+            if (a_idx < M*K && b_idx < K*N) {
+                output += d_a[a_idx] * d_b[b_idx];
+            }
+        }
+        atomicAdd(&d_c[c_i * N + c_j], output);
+    }
+}
+
 
 __global__ void gemm_share(float* d_a, float* d_b, float* d_c, int N, int K, int M) {
     /* 在baseline的基础上添加共享内存来存放输入值
@@ -333,20 +358,24 @@ void gemm_kernel_launcher(float* a, float* b, float* c, int N, int K, int M) {
     CUDA_CHECK(cudaMemcpy(d_a, a, sizeA * sizeof(float), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_b, b, sizeB * sizeof(float), cudaMemcpyHostToDevice));
 
-    /* 组织运行时线程 */
-    dim3 block(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 grid((M + BLOCK_SIZE - 1)/ BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
     /* baseline：naive版本的gemm，每个线程处理一个output元素 */
-    gemm_baseline<<<grid, block>>>(d_a, d_b, d_c, N, K, M);
+    // dim3 block(BLOCK_SIZE, BLOCK_SIZE);
+    // dim3 grid((M + BLOCK_SIZE - 1)/ BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    // gemm_baseline<<<grid, block>>>(d_a, d_b, d_c, N, K, M);
 
     /* cublas实现 */
     // cublas_gemm(d_a, d_b, d_c, N, K, M);
 
-    /* 优化一：使用共享内存+tile */
+    /*优化一：对K使用tile*/
+    dim3 block_1(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 grid_1((M + BLOCK_SIZE - 1)/ BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE, (K + TILE - 1) / TILE);
+    sgemm_tile<TILE><<<grid_1, block_1>>>(d_a, d_b, d_c, M, N, K);
+
+    /* 优化二：使用共享内存+tile */
     // gemm_share<<<grid, block>>>(d_a, d_b, d_c, N, K, M);
 
-    // /* 优化二：使用tile+prefetch策略 */
+    // /* 优化三：使用tile+prefetch策略 */
     // const int BLOCK_SIZE_M = 128;     // 每个线程块计算的矩阵C的连续行的数量
     // const int BLOCK_SIZE_K = 8;     // 每个线程块加载到共享内存中的矩阵A的连续列的数量
     // const int BLOCK_SIZE_N = 128;     // 每个线程块计算的矩阵C的连续列的数量
