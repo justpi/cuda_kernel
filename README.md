@@ -65,14 +65,14 @@ __global__ void gemm_baseline(float* d_a, float* d_b, float* d_c, int N, int K, 
 softmax是一个基本的激活函数，它可以将一个数值向量归一化为一个概率分布向量。
 
 softmax的计算公式如下：
-$$$
+$$
 m = max(x)
-$$$
+$$
 
 
-$$$
+$$
 softmax(x_i) = \frac {e^{x_i-m}} {\sum_j {e^{x_j-m}}}
-$$$
+$$
 
 ## 5. transpose
 
