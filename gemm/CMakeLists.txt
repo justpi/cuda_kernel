@@ -23,10 +23,10 @@ add_executable(gemm ${CPP_SOURCES} ${CU_SOURCES} ${HEADER_FILES})
 target_link_libraries(gemm ${CUDA_cublas_LIBRARY})
 
 # switch Debug/Release
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+if (BUILD_TYPE STREQUAL "Debug")
     message("Debug mode:")
     add_definitions(-DDEBUG)
-    target_compile_options(gemm PRIVATE -g -O0)
+    target_compile_options(gemm PRIVATE -g -O0 -lineinfo)
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     message("Release mode:")
     target_compile_options(gemm PRIVATE -O3)

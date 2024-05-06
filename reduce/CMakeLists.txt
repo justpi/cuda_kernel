@@ -21,11 +21,11 @@ add_executable(reduce ${CPP_SOURCES} ${CU_SOURCES} ${HEADER_FILES})
 
 
 # switch Debug/Release
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+if (TYPE STREQUAL "debug")
     message("Debug mode:")
     add_definitions(-DDEBUG)
-    target_compile_options(reduce PRIVATE -g -O0)
-elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    target_compile_options(reduce PRIVATE -g -O0 -lineinfo)
+elseif(TYPE STREQUAL "release")
     message("Release mode:")
     target_compile_options(reduce PRIVATE -O3)
 endif()

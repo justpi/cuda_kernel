@@ -286,13 +286,13 @@ void reduce_kernel_launcher(float* h_in, float* h_out, int N) {
     // reduce_kernel_bankconflic<<<grids, blocks>>>(d_in, d_out);
     
     /* 优化3：在上面的基础上改善了进程使用率（idle） */
-    // reduce_kernel_idle<<<grids_idle, blocks_idle>>>(d_in, d_out);
+    reduce_kernel_idle<<<grids_idle, blocks_idle>>>(d_in, d_out);
     
     /* 优化4：在优化3的基础上unroll了最后的几个循环计算 */
     // reduce_kernel_unrollLast32<<<grids_idle, blocks_idle>>>(d_in, d_out);
     
     /* 优化5：在优化4的基础上直接循环展开 */
-    reduce_kernel_unroll<<<grids_idle, blocks_idle>>>(d_in, d_out);
+    // reduce_kernel_unroll<<<grids_idle, blocks_idle>>>(d_in, d_out);
     
     /* 优化6：TODO:在使用shuffle指令 */
 

@@ -54,6 +54,37 @@ __global__ void sgemm_tile(float* d_a, float* d_b, float* d_c, int M, int N, int
 }
 
 
+__global__ void sgemm_tile_share(float* d_a, float* d_b, float* d_c, int M, int N, int K) {
+    /* 在tile的基础上，增加共享内存 */
+    __shared__ float sdata_a[TILE][TILE];
+    __shared__ float sdata_b[TILE][TILE];
+
+    unsigned int c_i = blockDim.x * blockIdx.x + threadIdx.x;
+    unsigned int c_j = blockDim.y * blockIdx.y + threadIdx.y;
+    unsigned int tile_idx = blockIdx.z;
+    
+    unsigned int tidx_y = threadIdx.y;
+    unsigned int tidx_x = threadIdx.x;
+
+    float output = 0.0;
+    size_t a_idx, b_idx;
+    /* 读取数据到共享内存中 */
+    for(int i=0; i < TILE; ++i) {
+        a_idx = c_i * K + i + TILE * tile_idx;
+        b_idx = (i + TILE * tile_idx) * N + c_j;
+        sdata_a[tidx_y][tidx_x] = d_a[a_idx];
+        sdata_b[tidx_x][tidx_y] = d_b[b_idx];
+        __syncthreads();
+    } 
+
+    /* 从共享内存读取数据完成计算 */
+    for (int k=0; k < TILE; ++k) {
+        output += sdata_a[tidx_y][k] * sdata_b[tidx_x][k];
+    }
+    atomicAdd(&d_c[c_i * N + c_j], output);
+}
+
+
 __global__ void gemm_share(float* d_a, float* d_b, float* d_c, int N, int K, int M) {
     /* 在baseline的基础上添加共享内存来存放输入值
         TODO:待完成，目前的线程组织分配还有问题
@@ -365,29 +396,33 @@ void gemm_kernel_launcher(float* a, float* b, float* c, int N, int K, int M) {
     // gemm_baseline<<<grid, block>>>(d_a, d_b, d_c, N, K, M);
 
     /* cublas实现 */
-    // cublas_gemm(d_a, d_b, d_c, N, K, M);
+    cublas_gemm(d_a, d_b, d_c, N, K, M);
 
     /*优化一：对K使用tile*/
-    dim3 block_1(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 grid_1((M + BLOCK_SIZE - 1)/ BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE, (K + TILE - 1) / TILE);
-    sgemm_tile<TILE><<<grid_1, block_1>>>(d_a, d_b, d_c, M, N, K);
+    // dim3 block_1(BLOCK_SIZE, BLOCK_SIZE);
+    // dim3 grid_1((M + BLOCK_SIZE - 1)/ BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE, (K + TILE - 1) / TILE);
+    // sgemm_tile<TILE><<<grid_1, block_1>>>(d_a, d_b, d_c, M, N, K);
 
+    // /* 优化二：tileK + shared mem */
+    // dim3 block_2(BLOCK_SIZE, BLOCK_SIZE);
+    // dim3 grid_2((M + BLOCK_SIZE - 1)/ BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE, (K + TILE - 1) / TILE);
+    // sgemm_tile_share<<<grid_2, block_2>>>(d_a, d_b, d_c, M, N, K);
     /* 优化二：使用共享内存+tile */
     // gemm_share<<<grid, block>>>(d_a, d_b, d_c, N, K, M);
 
-    // /* 优化三：使用tile+prefetch策略 */
-    // const int BLOCK_SIZE_M = 128;     // 每个线程块计算的矩阵C的连续行的数量
-    // const int BLOCK_SIZE_K = 8;     // 每个线程块加载到共享内存中的矩阵A的连续列的数量
-    // const int BLOCK_SIZE_N = 128;     // 每个线程块计算的矩阵C的连续列的数量
-    // const int THREAD_SIZE_Y = 8;    // 每个线程计算矩阵C的block的行数
-    // const int THREAD_SIZE_X = 8;    // 每个线程计算矩阵C的block的列数
-    // const bool ENABLE_DOUBLE_BUFFER = false;
+    /* 优化三：使用tile+prefetch策略 */
+    const int BLOCK_SIZE_M = 128;     // 每个线程块计算的矩阵C的连续行的数量
+    const int BLOCK_SIZE_K = 8;     // 每个线程块加载到共享内存中的矩阵A的连续列的数量
+    const int BLOCK_SIZE_N = 128;     // 每个线程块计算的矩阵C的连续列的数量
+    const int THREAD_SIZE_Y = 8;    // 每个线程计算矩阵C的block的行数
+    const int THREAD_SIZE_X = 8;    // 每个线程计算矩阵C的block的列数
+    const bool ENABLE_DOUBLE_BUFFER = false;
 
-    // dim3 block_size(BLOCK_SIZE_N / THREAD_SIZE_X, BLOCK_SIZE_M / THREAD_SIZE_Y);
-    // dim3 grid_size(N / BLOCK_SIZE_N, M / BLOCK_SIZE_M);
+    dim3 block_size(BLOCK_SIZE_N / THREAD_SIZE_X, BLOCK_SIZE_M / THREAD_SIZE_Y);
+    dim3 grid_size(N / BLOCK_SIZE_N, M / BLOCK_SIZE_M);
     
-    // gemm_prefetch<BLOCK_SIZE_M, BLOCK_SIZE_K, BLOCK_SIZE_N, THREAD_SIZE_Y, THREAD_SIZE_X, ENABLE_DOUBLE_BUFFER>
-    // <<<grid_size, block_size>>>(d_a, d_b, d_c, M, K, N);
+    gemm_prefetch<BLOCK_SIZE_M, BLOCK_SIZE_K, BLOCK_SIZE_N, THREAD_SIZE_Y, THREAD_SIZE_X, ENABLE_DOUBLE_BUFFER>
+    <<<grid_size, block_size>>>(d_a, d_b, d_c, M, K, N);
 
 
     /* 结果拷回host内存 */

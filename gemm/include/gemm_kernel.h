@@ -2,7 +2,7 @@
 
 #define BLOCK_SIZE 32
 
-#define TILE 1024
+#define TILE 64
 
 #define SHARED_BLOCK_SIZE 32
 
