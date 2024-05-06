@@ -68,3 +68,6 @@ __global__ void gemm_baseline(float* d_a, float* d_b, float* d_c, int N, int K, 
 
 ## 7. layernorm
 
+## 8. attention
+
+
