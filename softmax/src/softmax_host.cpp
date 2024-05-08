@@ -14,7 +14,7 @@ void softmax_host_base(float *a, float *h_o, int length, int stride) {
     float sum;
     for (int i=0; i < length; i+=stride) {
         /* 求最大值 */
-        m = INT_MIN;
+        m = -INFINITY;
         for(int j=0; j < stride; ++j) {
             m = m > a[i+j]? m:a[i+j];
         }
@@ -22,26 +22,29 @@ void softmax_host_base(float *a, float *h_o, int length, int stride) {
         /* 求指数和 */
         sum = 0.0;
         for(int j=0; j < stride; ++j) {
-            sum += exp(a[i+j] - m);
+            sum += expf(a[i+j] - m);
         }
         /* 求softmax */
         for(int j=0; j < stride; ++j) {
-            h_o[i+j] = exp(a[i+j] - m) / sum;
+            h_o[i+j] = expf(a[i+j] - m) / sum;
         }
     }
 
 }
 
 void softmax_host_online(float *a, float *h_o, int length, int stride) {
-    float m;
+    float m;    // 当前最值
+    float m_;   // 前一状态最值
     float sum;
     for (int i=0; i < length; i+=stride) {
         /* max & exp sum */
-        m = INT_MIN;
+        m = -INFINITY;
+        m_ = -INFINITY;
         sum = 0.0;
         for (int j=0; j < stride; ++j) {
+            m_ = m;
             m = m > a[i+j] ? m:a[i+j];
-            sum = sum * exp(a[i+j] - m) + exp(a[i+j] - m);
+            sum = sum * expf(m_ - m) + expf(a[i+j] - m);
         }
 
         /* softmax */

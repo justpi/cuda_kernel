@@ -26,6 +26,7 @@
         "system_error": "cpp",
         "thread": "cpp",
         "tuple": "cpp",
-        "variant": "cpp"
+        "variant": "cpp",
+        "cmath": "cpp"
     }
 }
