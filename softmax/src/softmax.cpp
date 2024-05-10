@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
 
     /* CPU */
     timer.start();
-    softmax_host_online(a, d_c, size, width);
+    softmax_host_online(a, h_c, size, width);
     timer.stop();
     timer.duration<Timer::ms>("softmax in cpu");
 
