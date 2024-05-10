@@ -101,6 +101,15 @@ online softmax在每次循环中只需访存2次，写入1次，而safe softmax�
 
 ## 7. layernorm
 
+layernorm算子在attention中非常常用，一般用来减少网络层和层之间的Covariate Shift，提高网络的收敛速度。layernorm的计算公式如下：
+
+$$
+y = \frac {x-\mu} {\sqrt{\delta^2 + \varepsilon}} \cdot \gamma + \beta
+$$
+
+layernorm和softmax很相似，都是在一行元素内计算做两次归约然后再做点积。
+
+
 ## 8. attention
 
 
