@@ -64,7 +64,7 @@ __global__ void gemm_baseline(float* d_a, float* d_b, float* d_c, int N, int K, 
 
 softmax是一个基本的激活函数，它可以将一个数值向量归一化为一个概率分布向量。
 
-softmax的计算公式如下：
+safe softmax的计算公式如下：
 
 $$
 m = max(x)
@@ -74,6 +74,26 @@ $$
 $$
 softmax(x_i) = \frac {e^{x_i-m}} {\sum_j {e^{x_j-m}}}
 $$
+
+使用safe softmax的原因是exp函数计算结果具有不稳定性，部分值在经过exp后超出数值表示范围，会引起softmax计算不准确。根据exp函数的特性，均减去最大值，这样可以保证softmax的计算结果准确。
+
+为了后续便于与其他算子进行融合，对safe softmax进行拆分，有online softmax函数，具体公式：
+
+$$
+\begin{align*}
+m_{i-1} = m_i, m_i = max(x, m_i)
+\\
+sum_i = sum_{i-1} * e ^ {m_{i-1} - m_i} + e^{x_i - m_i}
+\end{align*}
+$$
+
+$$
+softmax(x_i) = \frac {e^{x_i-m}} {sum}
+$$
+
+online softmax在每次循环中只需访存2次，写入1次，而safe softmax在每次循环中需要访存3次，写入1次。这种写法会有速度提升。
+
+
 
 ## 5. transpose
 

@@ -22,11 +22,11 @@ int main(int argc, char **argv) {
     seed = 42;
     initMatrix(a, size, min, max, seed);
 
-    /* CPU */
-    timer.start();
-    softmax_host_base(a, h_c, size, width);
-    timer.stop();
-    timer.duration<Timer::ms>("softmax in cpu");
+    // /* CPU */
+    // timer.start();
+    // softmax_host_base(a, h_c, size, width);
+    // timer.stop();
+    // timer.duration<Timer::ms>("softmax in cpu");
 
     /* CPU */
     timer.start();
@@ -34,17 +34,17 @@ int main(int argc, char **argv) {
     timer.stop();
     timer.duration<Timer::ms>("softmax in cpu");
 
-    // /* GPU warmup */
-    // timer.start();
-    // gemm_kernel_launcher(a, d_c, size, width);
-    // timer.stop();
-    // timer.duration<Timer::ms>("gemm in gpu(warmup)");
+    /* GPU warmup */
+    timer.start();
+    softmax_kernel_launcher(a, d_c, size, width);
+    timer.stop();
+    timer.duration<Timer::ms>("gemm in gpu(warmup)");
 
-    // /* GPU */
-    // timer.start();
-    // gemm_kernel_launcher(a, d_c, size, width);
-    // timer.stop();
-    // timer.duration<Timer::ms>("gemm in gpu");
+    /* GPU */
+    timer.start();
+    softmax_kernel_launcher(a, d_c, size, width);
+    timer.stop();
+    timer.duration<Timer::ms>("gemm in gpu");
 
     /* 验证结果 */
     compareMat(h_c, d_c, size);
