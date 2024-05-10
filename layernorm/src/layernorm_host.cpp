@@ -24,5 +24,9 @@ void layernorm_host_base(float* h_a, float *h_o, float gamma, float beta, int le
         }
     }
     
+}
 
+void layernorm_host_naive(float *h_a, float *h_o, float gamma, float beta, int length, int stride) {
+    /* 将方差和均值一起计算 */
+    
 }
