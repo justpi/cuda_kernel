@@ -27,6 +27,7 @@
         "thread": "cpp",
         "tuple": "cpp",
         "variant": "cpp",
-        "cmath": "cpp"
+        "cmath": "cpp",
+        "random": "cpp"
     }
 }
