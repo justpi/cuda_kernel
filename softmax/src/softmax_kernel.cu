@@ -10,7 +10,7 @@ __global__ void softmax_online_base(float *d_a, float *d_o, int length, int stri
     线程组织：block设置为一维，每个线程处理stride / blockDim.x个值；
     算法：将cpu版本的online softmax翻译为cuda代码
     */
-    int iters = stride / blockDim.x;
+    int iters = (stride + blockDim.x - 1) / blockDim.x;
     int idx;
     float m = -INFINITY;
     float m_ = -INFINITY;
@@ -34,7 +34,7 @@ __global__ void softmax_online_base(float *d_a, float *d_o, int length, int stri
 
 __global__ void softmax_online_vec(float *d_a, float *d_o, int length, int stride) {
     /*在baseline基础上添加向量化访存，一次访问4个元素用于计算*/
-    int iters = stride / (blockDim.x * 4);
+    int iters = (stride + (blockDim.x * 4) - 1) / (blockDim.x * 4);
     int idx;
     float m[4]={-INFINITY, -INFINITY, -INFINITY, -INFINITY};
     float m_[4]={-INFINITY, -INFINITY, -INFINITY, -INFINITY};
@@ -69,7 +69,7 @@ __global__ void softmax_online_vec(float *d_a, float *d_o, int length, int strid
 __global__ void softmax_online_vec_share(float *d_a, float *d_o, int length, int stride) {
     /*在向量化访存的基础上，先将数据存入共享内存*/
     __shared__ float sdata[BLOCK_SIZE];
-    int iters = stride / (blockDim.x * 4);
+    int iters = (stride + (blockDim.x * 4) - 1) / (blockDim.x * 4);
     int idx;
     float m[4]={-INFINITY, -INFINITY, -INFINITY, -INFINITY};
     float m_[4]={-INFINITY, -INFINITY, -INFINITY, -INFINITY};
@@ -125,12 +125,20 @@ void softmax_kernel_launcher(float* a, float* h_o, int length, int stride) {
     // dim3 grid(rows);
     // softmax_online_base<<<grid, block>>>(d_a, d_o, length, stride);
     /* 向量化访存 */
-    dim3 block_vec(BLOCK_SIZE/4);
-    dim3 grid_vec(rows);
-    // softmax_online_vec<<<grid_vec, block_vec>>>(d_a, d_o, length, stride);
+    if (stride >= BLOCK_SIZE) {
+        dim3 block_vec(BLOCK_SIZE/4);
+        dim3 grid_vec(rows);
+        softmax_online_vec<<<grid_vec, block_vec>>>(d_a, d_o, length, stride);
+    }
+    else {
+        dim3 block_vec(stride/4);
+        dim3 grid_vec(rows);
+        softmax_online_vec<<<grid_vec, block_vec>>>(d_a, d_o, length, stride);
+    }
+    
 
     /* 共享内存，TODO: 实现尚有问题 */
-    softmax_online_vec_share<<<grid_vec, block_vec>>>(d_a, d_o, length, stride);
+    // softmax_online_vec_share<<<grid_vec, block_vec>>>(d_a, d_o, length, stride);
 
     /* 拷贝数据 */
     CUDA_CHECK(cudaMemcpy(h_o, d_o, length * sizeof(float), cudaMemcpyDeviceToHost));
