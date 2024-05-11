@@ -58,6 +58,18 @@ __global__ void gemm_baseline(float* d_a, float* d_b, float* d_c, int N, int K, 
 
 ## 2. reduce
 
+reduce是一类算子，一般常用的求和、求最值等操作实际执行时均采用reduce操作，也叫归约操作。
+
+在GPU中，reduce有两种写法，第一种是顺序分块归约，第二种是递归归约。递归归约的时间复杂度较顺序分块归约的时间复杂度低。
+
+reduce的计算公式可以写成下面的方式：
+
+$$
+reduce(x) = x_0 \otimes x_1 \otimes x_2 ...\otimes x_n
+$$
+
+
+
 ## 3. element-wise
 
 ## 4. softmax
