@@ -46,6 +46,26 @@ void layernorm_host_naive(float *h_a, float *h_o, float gamma, float beta, int l
             h_o[i+j] = output;
         }
     }
-
     
+}
+
+void layernorm_host_welford(float *h_a, float *h_o, float gamma, float beta, int length, int stride) {
+    /* welford */
+    for (int i=0; i < length; i+=stride) {
+        float mu = 0.0; // 当前状态的均值
+        float mu_ = 0.0; // 前一状态的均值
+        float M = 0.0;  // 当前的M值
+        for (int j=0; j < stride; ++j) {
+            mu_ = mu;
+            mu = (mu * j + h_a[i+j]) / (j+1);
+            M = M + (h_a[i+j] - mu_) * (h_a[i+j] - mu);
+        }
+        float delta = M / stride;
+
+        /*layernorm*/
+        for (int j=0; j < stride; ++j) {
+            float output = (h_a[i+j] - mu) / (delta + EPS) * gamma + beta;
+            h_o[i+j] = output;
+        }
+    }
 }

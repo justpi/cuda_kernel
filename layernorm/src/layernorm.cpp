@@ -36,19 +36,23 @@ int main(int argc, char **argv) {
     timer.stop();
     timer.duration<Timer::ms>("layernorm in cpu");
 
-
+        /* CPU */
+    timer.start();
+    layernorm_host_welford(a, d_o, gamma, beta, size, width);
+    timer.stop();
+    timer.duration<Timer::ms>("layernorm in cpu");
 
     // /* GPU warmup */
     // timer.start();
     // layernorm_kernel_launcher(a, d_o, gamma, beta, size, width);
     // timer.stop();
-    // timer.duration<Timer::ms>("gemm in gpu(warmup)");
+    // timer.duration<Timer::ms>("layernorm in gpu(warmup)");
 
     // /* GPU */
     // timer.start();
     // layernorm_kernel_launcher(a, d_o, gamma, beta, size, width);
     // timer.stop();
-    // timer.duration<Timer::ms>("gemm in gpu");
+    // timer.duration<Timer::ms>("layernorm in gpu");
 
     /* 验证结果 */
     compareMat(h_o, d_o, size);

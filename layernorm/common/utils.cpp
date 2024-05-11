@@ -35,7 +35,7 @@ void compareMat(float* h_data, float* d_data, int size) {
         }
     }
     if (error) 
-      printf("Reduce result is different\n");
+      printf("layernorm result is different\n");
     else
-      printf("Reduce result is same, precision is 1.0E-3\n");
+      printf("layernorm result is same, precision is 1.0E-3\n");
 }

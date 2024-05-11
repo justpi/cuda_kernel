@@ -38,13 +38,13 @@ int main(int argc, char **argv) {
     timer.start();
     softmax_kernel_launcher(a, d_c, size, width);
     timer.stop();
-    timer.duration<Timer::ms>("gemm in gpu(warmup)");
+    timer.duration<Timer::ms>("softmax in gpu(warmup)");
 
     /* GPU */
     timer.start();
     softmax_kernel_launcher(a, d_c, size, width);
     timer.stop();
-    timer.duration<Timer::ms>("gemm in gpu");
+    timer.duration<Timer::ms>("softmax in gpu");
 
     /* 验证结果 */
     compareMat(h_c, d_c, size);
