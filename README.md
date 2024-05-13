@@ -145,6 +145,45 @@ online softmax在每次循环中只需访存2次，写入1次，而safe softmax�
 
 ## 6. conv
 
+卷积的naive版本计算公式如下：
+
+$$
+O_{b, c_o, h_o, w_o} = \sum_{ci=0}^{input\ channel} {\sum_{h_k, w_k}^{H_k, W_k} {weight_{b,ci,h_k,w_k} \cdot I_{b,ci,h_i+h_k,w_i+w_k}}}
+$$
+
+其中$h_i$和$h_o$之间的转换关系为：
+
+$$
+h_i = h_o * stride_r + h_k - padding_r
+$$
+
+$$
+w_i = w_o * stride_c + h_w - padding_c
+$$
+
+这种方式的大致cpu实现如下：
+```
+for(b:B) {
+    for(c_o:C) {
+        for (h_o:H) {
+            for (w_o:W) {
+                out_idx = b * CHW + c_o * HW + h_o * W + w_o;
+                O[out_idx] = bias[c_o];
+                for (h_k:H_k) {
+                    for (w_k:W_k) {
+                        input_h = h_o * stride_r + h_k - padding_r;
+                        input_w = h_o * stride_r + h_k - padding_r;
+                        for (c_i:C_I) {
+                            O[out_idx] += weight[c,h_k,w_k] * I[b, c_i,input_h,input_w];
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
 ## 7. layernorm
 
 layernorm算子在attention中非常常用，一般用来减少网络层和层之间的Covariate Shift，提高网络的收敛速度。layernorm的计算公式如下：
