@@ -1,6 +1,6 @@
 #include "layernorm_kernel.h"
 
-
+#define FETCH_FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
 
 __global__ void layernorm_kernel_base(float *d_a, float *d_o, float gamma, float beta, int length, int stride) {
     /*按照计算公式直接计算*/
@@ -166,7 +166,67 @@ __global__ void layernorm_kernel_bankconflict(float *d_a, float *d_o, float gamm
 
 }
 
+__global__ void layernorm_kernel_vec4(float *d_a, float *d_o, float gamma, float beta, int length, int stride) {
+    /*在unroll的基础上将访存变为向量化访存*/
+    __shared__ float sdata[3][BLOCK_SIZE + 1];  // m, m_, M, count四个数据, pad一个数，第0个位置不存值
+    int iters = stride / (blockDim.x * 4);
+    float m = 0.0f, m_= 0.0f;
+    float M = 0.0f;
+    float count = 0.0f;
+    float values[4];
+    #pragma unroll
+    for (int i=0; i < iters; ++i) {
+        int idx = blockIdx.x * stride + blockDim.x * i * 4 + threadIdx.x * 4;
+        FETCH_FLOAT4(values[0]) = FETCH_FLOAT4(d_a[idx]);
+        #pragma unroll
+        for (int j=0; j < 4; ++j) {
+            m_ = m;
+            m = m * count / (count + 1.0f) + values[j] / (count + 1.0f);
+            count++;
+            M = M + (values[j] - m) * (values[j] - m_);
+        }
+        
+    }
+    sdata[0][threadIdx.x+1] = m;
+    sdata[1][threadIdx.x+1] = M;
+    sdata[2][threadIdx.x+1] = count;
+    __syncthreads();
 
+    /*归约计算*/
+    #pragma unroll 
+    for (int s=blockDim.x / 2; s > 0; s >>= 1) {
+        if (threadIdx.x < s) {
+            float old_m = sdata[0][threadIdx.x+1 + s];
+            float old_M = sdata[1][threadIdx.x+1 + s];
+            float old_count = sdata[2][threadIdx.x+1 + s];
+
+            float new_count = sdata[2][threadIdx.x+1] + old_count;
+            float new_m = (sdata[0][threadIdx.x+1] * sdata[2][threadIdx.x+1] + old_m * old_count) / new_count;
+            float delta_m = old_m - sdata[0][threadIdx.x+1];
+            float new_M = sdata[1][threadIdx.x+1] + old_M + delta_m * delta_m * sdata[2][threadIdx.x+1] * old_count / new_count;
+
+            sdata[0][threadIdx.x+1] = new_m;
+            sdata[1][threadIdx.x+1] = new_M;
+            sdata[2][threadIdx.x+1] = new_count;
+        }
+        __syncthreads();
+    }
+
+    /*求解layernorm*/
+    float mean = sdata[0][1];
+    float variance = sdata[1][1] / sdata[2][1];
+    float stddev = sqrt(variance + EPSK);
+    #pragma unroll
+    for (int i=0; i < iters; ++i) {
+        int idx = blockIdx.x * stride + blockDim.x * i * 4 + threadIdx.x * 4;
+        FETCH_FLOAT4(values[0]) = FETCH_FLOAT4(d_a[idx]);
+        #pragma unroll
+        for (int j=0; j < 4; ++j) {
+            d_o[idx+j] = (values[j] - mean) / stddev * gamma + beta;
+        }
+    }
+
+}
 
 void layernorm_kernel_launcher(float *h_a, float *h_o, float gamma, float beta, int length, int stride) {
     /*分配内存*/
@@ -201,28 +261,28 @@ void layernorm_kernel_launcher(float *h_a, float *h_o, float gamma, float beta, 
     //     layernorm_kernel_unroll<<<grid_base, block_base>>>(d_a, d_o, gamma, beta, length, stride);
     // }
     /*使用padding解决bank conflict（并没有bank conflict）*/
-    if (stride >= BLOCK_SIZE) {
-        dim3 block_base(BLOCK_SIZE);    // 每个block处理stride个元素
-        dim3 grid_base(length / stride);
-        layernorm_kernel_bankconflict<<<grid_base, block_base>>>(d_a, d_o, gamma, beta, length, stride);
-    }
-    else {
-        dim3 block_base(stride);    // 每个block处理stride个元素
-        dim3 grid_base(length / stride);
-        layernorm_kernel_bankconflict<<<grid_base, block_base>>>(d_a, d_o, gamma, beta, length, stride);
-    }
-
-    // /*使用padding解决bank conflict（并没有bank conflict）*/
     // if (stride >= BLOCK_SIZE) {
     //     dim3 block_base(BLOCK_SIZE);    // 每个block处理stride个元素
     //     dim3 grid_base(length / stride);
-    //     layernorm_kernel_vec4<<<grid_base, block_base>>>(d_a, d_o, gamma, beta, length, stride);
+    //     layernorm_kernel_bankconflict<<<grid_base, block_base>>>(d_a, d_o, gamma, beta, length, stride);
     // }
     // else {
     //     dim3 block_base(stride);    // 每个block处理stride个元素
     //     dim3 grid_base(length / stride);
-    //     layernorm_kernel_vec4<<<grid_base, block_base>>>(d_a, d_o, gamma, beta, length, stride);
+    //     layernorm_kernel_bankconflict<<<grid_base, block_base>>>(d_a, d_o, gamma, beta, length, stride);
     // }
+
+    /*使用padding解决bank conflict（并没有bank conflict）*/
+    if (stride >= BLOCK_SIZE) {
+        dim3 block_base(BLOCK_SIZE/4);    // 每个block处理stride个元素
+        dim3 grid_base(length / stride);
+        layernorm_kernel_vec4<<<grid_base, block_base>>>(d_a, d_o, gamma, beta, length, stride);
+    }
+    else {
+        dim3 block_base(stride/4);    // 每个block处理stride个元素
+        dim3 grid_base(length / stride);
+        layernorm_kernel_vec4<<<grid_base, block_base>>>(d_a, d_o, gamma, beta, length, stride);
+    }
 
     
 
