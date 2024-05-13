@@ -45,7 +45,7 @@ __global__ void layernorm_kernel_base(float *d_a, float *d_o, float gamma, float
     /*求解layernorm*/
     float mean = sdata[0][0];
     float variance = sdata[1][0] / sdata[2][0];
-    float stddev = sqrt(variance + EPS);
+    float stddev = sqrt(variance + EPSK);
     for (int i=0; i < iters; ++i) {
         int idx = blockIdx.x * stride + blockDim.x * i + threadIdx.x;
         float value = d_a[idx];
@@ -53,6 +53,61 @@ __global__ void layernorm_kernel_base(float *d_a, float *d_o, float gamma, float
         d_o[idx] = output;
     }
 
+
+}
+
+__global__ void layernorm_kernel_unroll(float *d_a, float *d_o, float gamma, float beta, int length, int stride) {
+    /*一个block计算一个row，一个thread计算stride/blocksize个数*/
+    __shared__ float sdata[3][BLOCK_SIZE];  // m, m_, M, count四个数据
+    int iters = stride / blockDim.x;
+    float m = 0.0f, m_= 0.0f;
+    float M = 0.0f;
+    float count = 0.0f;
+    #pragma unroll
+    for (int i=0; i < iters; ++i) {
+        int idx = blockIdx.x * stride + blockDim.x * i + threadIdx.x;
+        float value = d_a[idx];
+        m_ = m;
+        m = m * count / (count + 1.0f) + value / (count + 1.0f);
+        count++;
+        M = M + (value - m) * (value - m_);
+    }
+    sdata[0][threadIdx.x] = m;
+    sdata[1][threadIdx.x] = M;
+    sdata[2][threadIdx.x] = count;
+    __syncthreads();
+
+    /*归约计算*/
+    #pragma unroll 
+    for (int s=blockDim.x / 2; s > 0; s >>= 1) {
+        if (threadIdx.x < s) {
+            float old_m = sdata[0][threadIdx.x + s];
+            float old_M = sdata[1][threadIdx.x + s];
+            float old_count = sdata[2][threadIdx.x + s];
+
+            float new_count = sdata[2][threadIdx.x] + old_count;
+            float new_m = (sdata[0][threadIdx.x] * sdata[2][threadIdx.x] + old_m * old_count) / new_count;
+            float delta_m = old_m - sdata[0][threadIdx.x];
+            float new_M = sdata[1][threadIdx.x] + old_M + delta_m * delta_m * sdata[2][threadIdx.x] * old_count / new_count;
+
+            sdata[0][threadIdx.x] = new_m;
+            sdata[1][threadIdx.x] = new_M;
+            sdata[2][threadIdx.x] = new_count;
+        }
+        __syncthreads();
+    }
+
+    /*求解layernorm*/
+    float mean = sdata[0][0];
+    float variance = sdata[1][0] / sdata[2][0];
+    float stddev = sqrt(variance + EPSK);
+    #pragma unroll
+    for (int i=0; i < iters; ++i) {
+        int idx = blockIdx.x * stride + blockDim.x * i + threadIdx.x;
+        float value = d_a[idx];
+        float output = (value - mean) / stddev * gamma + beta;
+        d_o[idx] = output;
+    }
 
 }
 
@@ -68,15 +123,27 @@ void layernorm_kernel_launcher(float *h_a, float *h_o, float gamma, float beta, 
     CUDA_CHECK(cudaMemcpy(d_a, h_a, length * sizeof(float), cudaMemcpyHostToDevice));
 
     /*组织线程以及执行核函数*/
+    // if (stride >= BLOCK_SIZE) {
+    //     dim3 block_base(BLOCK_SIZE);    // 每个block处理stride个元素
+    //     dim3 grid_base(length / stride);
+    //     layernorm_kernel_base<<<grid_base, block_base>>>(d_a, d_o, gamma, beta, length, stride);
+    // }
+    // else {
+    //     dim3 block_base(stride);    // 每个block处理stride个元素
+    //     dim3 grid_base(length / stride);
+    //     layernorm_kernel_base<<<grid_base, block_base>>>(d_a, d_o, gamma, beta, length, stride);
+    // }
+
+    /*unroll 循环*/
     if (stride >= BLOCK_SIZE) {
         dim3 block_base(BLOCK_SIZE);    // 每个block处理stride个元素
         dim3 grid_base(length / stride);
-        layernorm_kernel_base<<<grid_base, block_base>>>(d_a, d_o, gamma, beta, length, stride);
+        layernorm_kernel_unroll<<<grid_base, block_base>>>(d_a, d_o, gamma, beta, length, stride);
     }
     else {
         dim3 block_base(stride);    // 每个block处理stride个元素
         dim3 grid_base(length / stride);
-        layernorm_kernel_base<<<grid_base, block_base>>>(d_a, d_o, gamma, beta, length, stride);
+        layernorm_kernel_unroll<<<grid_base, block_base>>>(d_a, d_o, gamma, beta, length, stride);
     }
     
 

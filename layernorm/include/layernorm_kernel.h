@@ -2,7 +2,7 @@
 
 
 #define BLOCK_SIZE 1024
-#define EPS 1e-5
+#define EPSK 1e-5f
 
 
 
