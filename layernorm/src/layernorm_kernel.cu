@@ -4,7 +4,7 @@
 
 __global__ void layernorm_kernel_base(float *d_a, float *d_o, float gamma, float beta, int length, int stride) {
     /*一个block计算一个row，一个thread计算stride/blocksize个数*/
-    __shared__ float sdata[4][BLOCK_SIZE];  // m, m_, M, count四个数据
+    __shared__ float sdata[3][BLOCK_SIZE];  // m, m_, M, count四个数据
     int iters = stride / blockDim.x;
     float m = 0.0, m_= 0.0;
     float M = 0.0;
@@ -19,33 +19,32 @@ __global__ void layernorm_kernel_base(float *d_a, float *d_o, float gamma, float
         M = M + (value - m) * (value - m_);
     }
     sdata[0][threadIdx.x] = m;
-    sdata[1][threadIdx.x] = m_;
-    sdata[2][threadIdx.x] = M;
-    sdata[3][threadIdx.x] = count;
+    sdata[1][threadIdx.x] = M;
+    sdata[2][threadIdx.x] = count;
     __syncthreads();
 
     /*归约计算*/
     for (int s=blockDim.x / 2; s > 0; s >>= 1) {
         if (threadIdx.x < s) {
             float old_m = sdata[0][threadIdx.x + s];
-            float old_M = sdata[2][threadIdx.x + s];
-            float old_count = sdata[3][threadIdx.x + s];
+            float old_M = sdata[1][threadIdx.x + s];
+            float old_count = sdata[2][threadIdx.x + s];
 
-            float new_count = sdata[3][threadIdx.x] + old_count;
-            float new_m = (sdata[0][threadIdx.x] * sdata[3][threadIdx.x] + old_m * old_count) / new_count;
+            float new_count = sdata[2][threadIdx.x] + old_count;
+            float new_m = (sdata[0][threadIdx.x] * sdata[2][threadIdx.x] + old_m * old_count) / new_count;
             float delta_m = old_m - sdata[0][threadIdx.x];
-            float new_M = sdata[2][threadIdx.x] + old_M + delta_m * delta_m * sdata[3][threadIdx.x] * old_count / new_count;
+            float new_M = sdata[1][threadIdx.x] + old_M + delta_m * delta_m * sdata[2][threadIdx.x] * old_count / new_count;
 
             sdata[0][threadIdx.x] = new_m;
-            sdata[2][threadIdx.x] = new_M;
-            sdata[3][threadIdx.x] = new_count;
+            sdata[1][threadIdx.x] = new_M;
+            sdata[2][threadIdx.x] = new_count;
         }
         __syncthreads();
     }
 
     /*求解layernorm*/
     float mean = sdata[0][0];
-    float variance = sdata[2][0] / sdata[3][0];
+    float variance = sdata[1][0] / sdata[2][0];
     float stddev = sqrt(variance + EPS);
     for (int i=0; i < iters; ++i) {
         int idx = blockIdx.x * stride + blockDim.x * i + threadIdx.x;
