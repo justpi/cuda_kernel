@@ -4,7 +4,7 @@
 void transpose_cpu_base(float* a, float* b, int M, int N) {
     /* base版本的transpose */
     for (int i=0; i < M; ++i) {
-        for (int j=i+1; j < N; ++j) {
+        for (int j=0; j < N; ++j) {
             b[j * M + i] = a[i * N + j];
         }
     }

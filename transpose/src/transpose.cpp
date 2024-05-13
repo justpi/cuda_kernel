@@ -27,19 +27,19 @@ int main(int argc, char **argv) {
     timer.start();
     transpose_cpu_base(a, h_b, height, width);
     timer.stop();
-    timer.duration<Timer::ms>("gemm in cpu");
+    timer.duration<Timer::ms>("transpose in cpu");
 
     /* GPU warmup */
     timer.start();
     transpose_kernel_launcher(a, d_b, height, width);
     timer.stop();
-    timer.duration<Timer::ms>("gemm in gpu(warmup)");
+    timer.duration<Timer::ms>("transpose in gpu(warmup)");
 
     /* GPU */
     timer.start();
-    transpose_kernel_launcher(a, h_b, height, width);
+    transpose_kernel_launcher(a, d_b, height, width);
     timer.stop();
-    timer.duration<Timer::ms>("gemm in gpu");
+    timer.duration<Timer::ms>("transpose in gpu");
 
     /* 验证结果 */
     compareMat(h_b, d_b, size);

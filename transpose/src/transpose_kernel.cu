@@ -5,7 +5,7 @@
 __global__ void transpose_baseline(float* d_a, float * d_b, int M, int N) {
     /* base版本的transpose函数 */
     int idx_x = blockDim.x * blockIdx.x + threadIdx.x;
-    int idx_y = blockDim.x * blockIdx.x + threadIdx.x;
+    int idx_y = blockDim.y * blockIdx.y + threadIdx.y;
     d_b[idx_x * M + idx_y] = d_a[idx_y * N + idx_x];
 }
 

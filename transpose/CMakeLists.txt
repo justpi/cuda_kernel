@@ -23,11 +23,11 @@ add_executable(transpose ${CPP_SOURCES} ${CU_SOURCES} ${HEADER_FILES})
 target_link_libraries(transpose ${CUDA_cublas_LIBRARY})
 
 # switch Debug/Release
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+if (TYPE STREQUAL "Debug")
     message("Debug mode:")
     add_definitions(-DDEBUG)
     target_compile_options(transpose PRIVATE -g -O0)
-elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+elseif(TYPE STREQUAL "Release")
     message("Release mode:")
     target_compile_options(transpose PRIVATE -O3)
 endif()
