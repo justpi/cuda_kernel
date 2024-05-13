@@ -19,7 +19,7 @@ void layernorm_host_base(float* h_a, float *h_o, float gamma, float beta, int le
         /* 3. 计算点积 */
         float output;
         for (int j=0; j < stride; ++j) {
-            output = (h_a[i+j] - mu) / (delta + EPS) * gamma + beta;
+            output = (h_a[i+j] - mu) / sqrtf(delta + EPS) * gamma + beta;
             h_o[i+j] = output;
         }
     }
@@ -42,7 +42,7 @@ void layernorm_host_naive(float *h_a, float *h_o, float gamma, float beta, int l
         float delta = mu_2 - mu * mu;
         /* layernorm计算 */
         for(int j=0; j < stride; ++j) {
-            float output = (h_a[i+j] - mu) / (delta + EPS) * gamma + beta;
+            float output = (h_a[i+j] - mu) / sqrtf(delta + EPS) * gamma + beta;
             h_o[i+j] = output;
         }
     }
@@ -64,7 +64,7 @@ void layernorm_host_welford(float *h_a, float *h_o, float gamma, float beta, int
 
         /*layernorm*/
         for (int j=0; j < stride; ++j) {
-            float output = (h_a[i+j] - mu) / (delta + EPS) * gamma + beta;
+            float output = (h_a[i+j] - mu) / sqrtf(delta + EPS) * gamma + beta;
             h_o[i+j] = output;
         }
     }

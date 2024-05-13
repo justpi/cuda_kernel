@@ -24,35 +24,35 @@ int main(int argc, char **argv) {
     seed = 42;
     initMatrix(a, size, min, max, seed);
 
+    // /* CPU */
+    // timer.start();
+    // layernorm_host_base(a, h_o, gamma, beta, size, width);
+    // timer.stop();
+    // timer.duration<Timer::ms>("layernorm in cpu");
+
+    // /* CPU */
+    // timer.start();
+    // layernorm_host_naive(a, d_o, gamma, beta, size, width);
+    // timer.stop();
+    // timer.duration<Timer::ms>("layernorm in cpu");
+
     /* CPU */
     timer.start();
-    layernorm_host_base(a, h_o, gamma, beta, size, width);
+    layernorm_host_welford(a, h_o, gamma, beta, size, width);
     timer.stop();
     timer.duration<Timer::ms>("layernorm in cpu");
 
-    /* CPU */
+    /* GPU warmup */
     timer.start();
-    layernorm_host_naive(a, d_o, gamma, beta, size, width);
+    layernorm_kernel_launcher(a, d_o, gamma, beta, size, width);
     timer.stop();
-    timer.duration<Timer::ms>("layernorm in cpu");
+    timer.duration<Timer::ms>("layernorm in gpu(warmup)");
 
-        /* CPU */
+    /* GPU */
     timer.start();
-    layernorm_host_welford(a, d_o, gamma, beta, size, width);
+    layernorm_kernel_launcher(a, d_o, gamma, beta, size, width);
     timer.stop();
-    timer.duration<Timer::ms>("layernorm in cpu");
-
-    // /* GPU warmup */
-    // timer.start();
-    // layernorm_kernel_launcher(a, d_o, gamma, beta, size, width);
-    // timer.stop();
-    // timer.duration<Timer::ms>("layernorm in gpu(warmup)");
-
-    // /* GPU */
-    // timer.start();
-    // layernorm_kernel_launcher(a, d_o, gamma, beta, size, width);
-    // timer.stop();
-    // timer.duration<Timer::ms>("layernorm in gpu");
+    timer.duration<Timer::ms>("layernorm in gpu");
 
     /* 验证结果 */
     compareMat(h_o, d_o, size);

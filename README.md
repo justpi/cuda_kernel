@@ -68,7 +68,41 @@ $$
 reduce(x) = x_0 \otimes x_1 \otimes x_2 ...\otimes x_n
 $$
 
+我们在这里实现的是reduceSum操作，首先根据reduce的计算方式实现一个baseline，首先将数据存入共享内存中：
 
+```c++
+__global__ void reduce_kernel_baseline(float* d_in, float* d_out) {
+    /*base版本的reduce算子
+    d_in: reduce算子的输入，表示为一维数组；
+    d_out: reduce算子的输出，表示为一维数组；
+    使用共享内存进行访存, block和grid均为一维
+    */
+   __shared__ float sdata[THREADS_PER_BLOCK];
+
+   /* 获取输入的index和当前进程的index */
+   unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+   unsigned int tidx = threadIdx.x;
+
+   /* 读取输入到共享内存 */
+    sdata[tidx] = d_in[idx];
+   __syncthreads();
+
+    /*  进行reduce操作:
+        这个过程需要进行多轮迭代，
+        在第一轮迭代中，如果tid%2 ==0, 则第tid号线程将shared memory中第tid号位置的值和第tid+1号的值进行相加，而后放在第tid号位置。
+        在第二轮迭代中，如果tid%4==0,则第tid号线程将shared memory中第tid号位置的值和第tid+2号的值进行相加，而后放在第tid号位置。
+        不断迭代，则所有元素都将被累加到第0号位置。
+     */
+    for (int s=1; s < blockDim.x; s*=2) {
+        if (tidx % (2*s) == 0)
+            sdata[tidx] += sdata[s + tidx];
+        __syncthreads();
+    }
+    /* 写回到主存中 */
+    if (tidx == 0) d_out[blockIdx.x] = sdata[0];
+}
+
+```
 
 ## 3. element-wise
 
