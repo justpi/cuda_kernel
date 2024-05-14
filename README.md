@@ -8,6 +8,88 @@
 
 ## 3. 优化方式
 
+### 3.1 Warp Function
+
+一共有三类warp-level原语，参考自[知乎上的一篇文章](zhuanlanzhihu.com/p/572820783)。
+
+第一类函数是在warp中的线程之间进行数据交换的函数：
+1. Warp Vote Functions：
+    - __all_sync:
+        - 函数声明：
+            ```c++
+            int __all_sync(unsigned mask, int predicate);
+            ```
+        - 作用：用于在一个warp内部进行条件同步，它能确保只有当前mask中所有线程都满足给定条件时，才会执行后续的代码；
+    - __any_sync：
+        - 函数声明：
+            ```c++
+            int __any_sync(unsigned mask, int predicate);
+            ```
+        - 作用：用于检查一个warp中是否至少有一个线程的指定条件是真，和__all_sync的区别是`__any_sync`只需有一个线程满足要求，则可继续执行，而`__all_sync`需要保证所有线程均满足要求才能继续执行；
+    - __uni_sync：
+        - 函数声明：
+            ```c++
+            int __uni_sync(unsigned mask, int predicate);
+            ```
+        - 作用：
+    - __ballot_sync：
+        - 函数声明：
+            ```c++
+            unsigned __ballot_sync(unsigned mask, int predicate);
+            ```
+        - 作用：
+2. Warp Reduce Functions:
+    - __shfl_sync：
+        - 函数声明：
+            ```c++
+            T __shfl_sync(unsigned mask, T var, int srcLane, int width=warpSize);
+            ```
+        - 作用：
+    - __shfl_up_sync：
+        - 函数声明：
+            ```c++
+            T __shfl_up_sync(unsigned mask, T var, unsigned int delta, int width=warpSize);
+            ```
+        - 作用：
+    - __shfl_down_sync：
+        - 函数声明：
+            ```c++
+            T __shfl_down_sync(unsigned mask, T var, unsigned int delta, int width=warpSize);
+            ```
+        - 作用：
+    - __shfl_xor_sync：
+        - 函数声明：
+            ```c++
+            T __shfl_xor_sync(unsigned mask, T var, unsigned int delta, int width=warpSize);
+            ```
+        - 作用：
+3. Warp Match Functions：
+    - __match_any_sync：
+        - 函数声明：
+            ```c++
+            unsigned int __match_any_sync(unsigned mask, T value);
+            ```
+        - 作用：
+    - __match_all_sync：
+        - 函数声明：
+            ```c++
+            unsigned int __match_all_sync(unsigned mask, T value, int *pred);
+            ```
+        - 作用：
+
+第二类是Active mask query，作用是返回一个32位的掩码，这个掩码表示哪些线程处于活动状态：
+    - __activemask：
+        - 函数声明：
+            ```c++
+            ```
+        - 作用：
+
+第三类是线程同步函数，作用是同步warp中的线程，并提供内存隔离
+    - __syncwarp：
+        - 函数声明：
+            ```c++
+            ```
+        - 作用：
 
 # 算子开发
 
