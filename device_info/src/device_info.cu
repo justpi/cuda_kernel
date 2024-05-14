@@ -22,6 +22,7 @@ int main(){
         LOG("%-40s%.2f%s",       "Shared memory per SM: ",        (float)prop.sharedMemPerMultiprocessor / (1<<10), "KB");
         LOG("%-40s%.2f%s",       "Device clock rate: ",           prop.clockRate*1E-6, "GHz");
         LOG("%-40s%.2f%s",       "Device memory clock rate: ",    prop.memoryClockRate*1E-6, "Ghz");
+        LOG("%-40s%.2f%s",       "Theoretical Band Width: ",      (float)prop.memoryClockRate * 1000 * (float)prop.memoryBusWidth / 8 * 2 / 1000000000, "GB/s");
         LOG("%-40s%d%s",         "Number of SM: ",                prop.multiProcessorCount, "");
         LOG("%-40s%d%s",         "Warp size: ",                   prop.warpSize, "");
 
