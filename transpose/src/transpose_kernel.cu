@@ -10,6 +10,15 @@ __global__ void transpose_baseline(float* d_a, float * d_b, int M, int N) {
 }
 
 
+__global__ void transpose_shared(float* d_a, float* d_b, int M, int N) {
+    __shared__ float sdata[BLOCK_SIZE][BLOCK_SIZE];
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    int idy = blockDim.y * blockIdx.y + threadIdx.y;
+
+    sdata[threadIdx.y][threadIdx.x] = d_a[idx * N + idy];
+    __syncthreads();
+    d_b[idy * M + idx] = sdata[threadIdx.y][threadIdx.x];
+}
 
 void transpose_kernel_launcher(float* h_a, float* h_b, int M, int N) {
     /* transpose核函数launcher:
@@ -34,6 +43,11 @@ void transpose_kernel_launcher(float* h_a, float* h_b, int M, int N) {
     dim3 grid((M + BLOCK_SIZE - 1) / BLOCK_SIZE, (M + BLOCK_SIZE - 1) / BLOCK_SIZE);
     
     transpose_baseline<<<grid, block>>>(d_a, d_b, M, N);
+    /*添加shared mem*/
+    // dim3 block_share(BLOCK_SIZE, BLOCK_SIZE);
+    // dim3 grid_share((M + BLOCK_SIZE - 1) / BLOCK_SIZE, (M + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    
+    // transpose_shared<<<grid_share, block_share>>>(d_a, d_b, M, N);
 
     /* 数据拷回 */
     CUDA_CHECK(cudaMemcpy(h_b, d_b, size * sizeof(float), cudaMemcpyDeviceToHost));
