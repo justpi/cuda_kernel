@@ -2,11 +2,17 @@
 #include <cuda_runtime.h>
 #include <iostream>
 #include <cublas_v2.h>
+#include <cuda_fp16.h>
+#include <mma.h>
+
+using namespace nvcuda;
 
 /* float4读取数据的宏 */
 #define OFFSET(row, col, ld) ((row) * (ld) + (col))
 // 此宏将传递给它的指针 pointer 解释为指向 float4 类型数据的指针，并提取该位置的 float4 值。
 #define FETCH_FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
+
+#define div_ceil(a, b) ((a + b - 1) / b)
 
 
 __global__ void gemm_baseline(float* d_a, float* d_b, float* d_c, int N, int K, int M) {
@@ -358,6 +364,34 @@ __global__ void gemm_prefetch(float* __restrict__ d_a, float* __restrict__ d_b, 
 }
 
 
+__global__ void hgemm_tensorcore(half *d_a, half *d_b, half *d_c, int N, int K, int M) {
+    /*混合精度计算，使用tensorcore完成矩阵计算*/
+    int k_tile = div_ceil(K, WMMA_K);
+
+    int idx_row = blockIdx.y * WMMA_M;
+    int idx_col = blockIdx.x * WMMA_N;
+
+    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, half> frag_c;
+    /*frag_c赋值*/
+    wmma::fill_fragment(frag_c, 0.0f);
+    for (int i=0; i < k_tile; ++i) {
+        /**/
+        wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> frag_a;
+        wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> frag_b;
+
+        /*从global mem拷贝数据*/
+        wmma::load_matrix_sync(frag_a, d_a + idx_row * K + i * WMMA_K, K);
+        wmma::load_matrix_sync(frag_b, d_b + idx_col * K + i * WMMA_K, K);
+
+        /*计算*/
+        wmma::mma_sync(frag_c, frag_a, frag_b, frag_c);
+    }
+
+    wmma::store_matrix_sync(d_c + idx_row * N + idx_col, frag_c, N, wmma::mem_row_major);
+
+
+}
+
 
 
 void cublas_gemm(float* d_a, float* d_b, float* d_c, int N, int K, int M) {
@@ -410,20 +444,25 @@ void gemm_kernel_launcher(float* a, float* b, float* c, int N, int K, int M) {
     /* 优化二：使用共享内存+tile */
     // gemm_share<<<grid, block>>>(d_a, d_b, d_c, N, K, M);
 
-    /* 优化三：使用tile+prefetch策略 */
-    const int BLOCK_SIZE_M = 128;     // 每个线程块计算的矩阵C的连续行的数量
-    const int BLOCK_SIZE_K = 8;     // 每个线程块加载到共享内存中的矩阵A的连续列的数量
-    const int BLOCK_SIZE_N = 128;     // 每个线程块计算的矩阵C的连续列的数量
-    const int THREAD_SIZE_Y = 8;    // 每个线程计算矩阵C的block的行数
-    const int THREAD_SIZE_X = 8;    // 每个线程计算矩阵C的block的列数
-    const bool ENABLE_DOUBLE_BUFFER = false;
+    // /* 优化三：使用tile+prefetch策略 */
+    // const int BLOCK_SIZE_M = 128;     // 每个线程块计算的矩阵C的连续行的数量
+    // const int BLOCK_SIZE_K = 8;     // 每个线程块加载到共享内存中的矩阵A的连续列的数量
+    // const int BLOCK_SIZE_N = 128;     // 每个线程块计算的矩阵C的连续列的数量
+    // const int THREAD_SIZE_Y = 8;    // 每个线程计算矩阵C的block的行数
+    // const int THREAD_SIZE_X = 8;    // 每个线程计算矩阵C的block的列数
+    // const bool ENABLE_DOUBLE_BUFFER = false;
 
-    dim3 block_size(BLOCK_SIZE_N / THREAD_SIZE_X, BLOCK_SIZE_M / THREAD_SIZE_Y);
-    dim3 grid_size(N / BLOCK_SIZE_N, M / BLOCK_SIZE_M);
+    // dim3 block_size(BLOCK_SIZE_N / THREAD_SIZE_X, BLOCK_SIZE_M / THREAD_SIZE_Y);
+    // dim3 grid_size(N / BLOCK_SIZE_N, M / BLOCK_SIZE_M);
     
-    gemm_prefetch<BLOCK_SIZE_M, BLOCK_SIZE_K, BLOCK_SIZE_N, THREAD_SIZE_Y, THREAD_SIZE_X, ENABLE_DOUBLE_BUFFER>
-    <<<grid_size, block_size>>>(d_a, d_b, d_c, M, K, N);
+    // gemm_prefetch<BLOCK_SIZE_M, BLOCK_SIZE_K, BLOCK_SIZE_N, THREAD_SIZE_Y, THREAD_SIZE_X, ENABLE_DOUBLE_BUFFER>
+    // <<<grid_size, block_size>>>(d_a, d_b, d_c, M, K, N);
 
+
+    /*tensor core实现*/
+    dim3 block_h(WARP_SIZE);
+    dim3 grid_h(div_ceil(M, WMMA_M), div_ceil(N, WMMA_N));
+    hgemm_tensorcore<<<block_h, grid_h>>>(d_a, d_b, d_c, M, K, N);
 
     /* 结果拷回host内存 */
     CUDA_CHECK(cudaMemcpy(c, d_c, sizeC * sizeof(float), cudaMemcpyDeviceToHost));
