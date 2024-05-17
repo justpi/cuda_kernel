@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
 
     /* CPU */
     // timer.start();
-    // gemm_cpu_base(a, b, h_c, width, width, width);
+    // hgemm_cpu_base(a, b, h_c, width, width, width);
     // timer.stop();
     // timer.duration<Timer::ms>("gemm in cpu");
 

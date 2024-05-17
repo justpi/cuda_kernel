@@ -398,11 +398,11 @@ void cublas_gemm(half* d_a, half* d_b, half* d_c, int N, int K, int M) {
     
     cublasHandle_t blas_handle;
     cublasCreate(&blas_handle);
-    half alpha = 1.0;
-    half beta = 0;
-    cublasHgemm(blas_handle, CUBLAS_OP_T, CUBLAS_OP_T, 
+    half alpha = 1.0f;
+    half beta = 0.0f;
+    cublasHgemm(blas_handle, CUBLAS_OP_N, CUBLAS_OP_T, 
                 M, N, K, &alpha,
-                d_a, K, d_b, N, &beta, d_c, N 
+                d_a, M, d_b, K, &beta, d_c, M 
                 );
 }
 
@@ -458,9 +458,6 @@ void hgemm_kernel_launcher(half* a, half* b, half* c, int N, int K, int M) {
     // dim3 block(BLOCK_SIZE, BLOCK_SIZE);
     // dim3 grid((M + BLOCK_SIZE - 1)/ BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE);
     // gemm_baseline<<<grid, block>>>(d_a, d_b, d_c, N, K, M);
-
-    /* cublas实现 */
-    cublas_gemm(d_a, d_b, d_c, N, K, M);
 
     /*优化一：对K使用tile*/
     // dim3 block_1(BLOCK_SIZE, BLOCK_SIZE);

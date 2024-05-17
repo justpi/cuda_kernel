@@ -5,9 +5,9 @@
         d_b: K * N
         d_c: M * N
 */
-void gemm_cpu_base(half *a, half *b, half *c, int N, int K, int M) {
-    for (int i=0; i < N; i++) {
-        for (int j=0; j < M; j++) {
+void hgemm_cpu_base(half *a, half *b, half *c, int N, int K, int M) {
+    for (int i=0; i < M; i++) {
+        for (int j=0; j < N; j++) {
             float tmpValue = 0.0f;
             for (int k=0; k < K; k++) {
                 tmpValue += a[i * K + k] * b[k * N + j];
