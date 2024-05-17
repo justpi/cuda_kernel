@@ -371,24 +371,27 @@ __global__ void hgemm_tensorcore(half *d_a, half *d_b, half *d_c, int N, int K, 
     int idx_row = blockIdx.y * WMMA_M;
     int idx_col = blockIdx.x * WMMA_N;
 
-    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, half> frag_c;
-    /*frag_c赋值*/
-    wmma::fill_fragment(frag_c, 0.0f);
-    for (int i=0; i < k_tile; ++i) {
-        /**/
-        wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> frag_a;
-        wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> frag_b;
+    if (idx_row < M && idx_col < N) {
+        wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, half> frag_c;
+        /*frag_c赋值*/
+        wmma::fill_fragment(frag_c, 0.0f);
+        /*frag_c需要从主存读数赋值*/
+        wmma::load_matrix_sync(frag_c, d_c + idx_row * N + idx_col, N, wmma::mem_row_major);
+        for (int i=0; i < k_tile; ++i) {
+            /**/
+            wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> frag_a;
+            wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> frag_b;
 
-        /*从global mem拷贝数据*/
-        wmma::load_matrix_sync(frag_a, d_a + idx_row * K + i * WMMA_K, K);
-        wmma::load_matrix_sync(frag_b, d_b + idx_col * K + i * WMMA_K, K);
+            /*从global mem拷贝数据*/
+            wmma::load_matrix_sync(frag_a, d_a + idx_row * K + i * WMMA_K, K);
+            wmma::load_matrix_sync(frag_b, d_b + idx_col * N + i * WMMA_K, N);
 
-        /*计算*/
-        wmma::mma_sync(frag_c, frag_a, frag_b, frag_c);
+            /*计算*/
+            wmma::mma_sync(frag_c, frag_a, frag_b, frag_c);
+        }
+
+        wmma::store_matrix_sync(d_c + idx_row * N + idx_col, frag_c, N, wmma::mem_row_major);
     }
-
-    wmma::store_matrix_sync(d_c + idx_row * N + idx_col, frag_c, N, wmma::mem_row_major);
-
 
 }
 
@@ -405,6 +408,18 @@ void cublas_gemm(float* d_a, float* d_b, float* d_c, int N, int K, int M) {
                 M, N, K, &alpha,
                 d_a, K, d_b, N, &beta, d_c, N 
                 );
+}
+
+void float_to_half_host(float *host_float, half *host_half, int num_elements) {
+    for (int i = 0; i < num_elements; ++i) {
+        host_half[i] = __float2half(host_float[i]);
+    }
+}
+
+void half_to_float_host(half *host_float, float *host_half, int num_elements) {
+    for (int i = 0; i < num_elements; ++i) {
+        host_half[i] = __half2float(host_float[i]);
+    }
 }
 
 void gemm_kernel_launcher(float* a, float* b, float* c, int N, int K, int M) {
@@ -460,12 +475,37 @@ void gemm_kernel_launcher(float* a, float* b, float* c, int N, int K, int M) {
 
 
     /*tensor core实现*/
+    /*创建half变量*/
+    half* a_half = (half*)malloc(sizeA * sizeof(half));
+    half* b_half = (half*)malloc(sizeB * sizeof(half));
+    half* c_half = (half*)malloc(sizeC * sizeof(half));
+    
+    /*格式转换*/
+    float_to_half_host(a, a_half, sizeA);
+    float_to_half_host(b, b_half, sizeB);
+    float_to_half_host(c, c_half, sizeC);
+
+    /*创建global mem*/
+    half* d_a_half;
+    half* d_b_half;
+    half* d_c_half;
+
+    CUDA_CHECK(cudaMalloc(&d_a_half, sizeA * sizeof(half)));
+    CUDA_CHECK(cudaMalloc(&d_b_half, sizeB * sizeof(half)));
+    CUDA_CHECK(cudaMalloc(&d_c_half, sizeC * sizeof(half)));
+
+    CUDA_CHECK(cudaMemcpy(d_a_half, a_half, sizeA * sizeof(half), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_b_half, b_half, sizeB * sizeof(half), cudaMemcpyHostToDevice));
+
     dim3 block_h(WARP_SIZE);
     dim3 grid_h(div_ceil(M, WMMA_M), div_ceil(N, WMMA_N));
-    hgemm_tensorcore<<<block_h, grid_h>>>(d_a, d_b, d_c, M, K, N);
+    hgemm_tensorcore<<<grid_h, block_h>>>(d_a_half, d_b_half, d_c_half, M, K, N);
+
+    CUDA_CHECK(cudaMemcpy(c_half, d_c_half, sizeC * sizeof(half), cudaMemcpyDeviceToHost));
+    half_to_float_host(c_half, c, sizeC);
 
     /* 结果拷回host内存 */
-    CUDA_CHECK(cudaMemcpy(c, d_c, sizeC * sizeof(float), cudaMemcpyDeviceToHost));
+    // CUDA_CHECK(cudaMemcpy(c, d_c, sizeC * sizeof(float), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaDeviceSynchronize());
     LAST_KERNEL_CHECK();
 

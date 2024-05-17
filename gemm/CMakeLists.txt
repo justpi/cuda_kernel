@@ -4,6 +4,8 @@ project(gemm LANGUAGES CXX CUDA)
 
 find_package(CUDA REQUIRED)
 
+set(CMAKE_CUDA_ARCHITECTURES 86)
+
 # Include directories for header files
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
