@@ -380,11 +380,11 @@ __global__ void hgemm_tensorcore(half *d_a, half *d_b, half *d_c, int N, int K, 
         for (int i=0; i < k_tile; ++i) {
             /**/
             wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> frag_a;
-            wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> frag_b;
+            wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> frag_b;
 
             /*从global mem拷贝数据*/
             wmma::load_matrix_sync(frag_a, d_a + idx_row * K + i * WMMA_K, K);
-            wmma::load_matrix_sync(frag_b, d_b + idx_col * N + i * WMMA_K, N);
+            wmma::load_matrix_sync(frag_b, d_b + (i * WMMA_K) * N + idx_col, N);
 
             /*计算*/
             wmma::mma_sync(frag_c, frag_a, frag_b, frag_c);
