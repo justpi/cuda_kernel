@@ -20,14 +20,14 @@ file(GLOB_RECURSE HEADER_FILES "include/*.h" "include/*.hpp" "include/*.cuh" "co
 add_executable(gemm ${CPP_SOURCES} ${CU_SOURCES} ${HEADER_FILES})
 
 # 链接cuBLAS库
-target_link_libraries(gemm ${CUDA_cublas_LIBRARY})
+target_link_libraries(gemm ${CUDA_cublas_LIBRARY} )
 
 # switch Debug/Release
-if (BUILD_TYPE STREQUAL "Debug")
+if (TYPE STREQUAL "Debug")
     message("Debug mode:")
     add_definitions(-DDEBUG)
-    target_compile_options(gemm PRIVATE -g -O0 -lineinfo)
-elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    target_compile_options(gemm PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-g -O0 -lineinfo --generate-code arch=compute_86,code=sm_86>)
+elseif(TYPE STREQUAL "Release")
     message("Release mode:")
-    target_compile_options(gemm PRIVATE -O3)
+    target_compile_options(gemm PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3 --generate-code arch=compute_86,code=sm_86>)
 endif()
