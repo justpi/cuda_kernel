@@ -1,7 +1,50 @@
+# 运行硬件
+
+## 1. Orin开发板 64G
+
+Tensor Core算力：一共有16个SM单元，计算核心频率最高为1.3GHz，每个SM单元包含4个TensorCore和128个CUDA Core，安培架构一拍可以计算（16x8+8x16=256次乘累加）
+
+Tensor Core峰值性能：16x4x256x1.3GHz=20.8TFLOPs
+
+CUDA Core峰值性能：16x128x1x1.3GHz=2.6TFLOPs
+
+
+
 # CUDA基础知识
 
 ## 1. 编程模型
 
+### Tensor Core编程模型
+
+- 声明两个输入矩阵和一个输出矩阵的fragment，这个fragment用的是整个warp的寄存器，具体声明方法如下：
+    ```c++
+    // 输入的矩阵a于矩阵b声明
+    wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> frag_a;
+    wmma::fragment<wmma::matrix_b, 16, 16, 16, half, wmma::row_major> frag_b;
+    // 输出的矩阵声明
+    wmma::fragment<wmma::accumulator, 16, 16, 16, half> frag_c;
+
+    ```
+
+- 初始化矩阵，这种方式可以直接初始化整个矩阵
+    ```c++
+    wmma::fill_fragment(frag_c, 0.0f);
+    ```
+
+- 加载矩阵数据
+    ```c++
+    wmma::load_matrix_sync(frag_a, (shared memory / global memory), stride_a);
+    wmma::load_matrix_sync(frag_b, (shared memory / global memory), stride_b);
+    ```
+- 矩阵计算
+    ```c++
+    wmma::mma_sync(frag_c, frag_a, frag_b, frag_c);
+    ```
+
+- 结果写回
+    ```c++
+    wmma::store_matrix_sync((shared memory / global memory), frag_c, stride_c, wmma::mem_row_major);
+    ```
 
 ## 2. 运行模型
 
