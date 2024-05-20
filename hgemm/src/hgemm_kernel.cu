@@ -12,6 +12,9 @@ using namespace nvcuda;
 // 此宏将传递给它的指针 pointer 解释为指向 half4 类型数据的指针，并提取该位置的 half4 值。
 #define FETCH_HALF2(pointer) (reinterpret_cast<half2*>(&(pointer))[0])
 
+// 此宏将传递给它的指针 pointer 解释为指向 float4 类型数据的指针，并提取该位置的 float4 值。
+#define FETCH_FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
+
 #define div_ceil(a, b) ((a + b - 1) / b)
 
 
@@ -360,7 +363,7 @@ __global__ void gemm_prefetch(half* __restrict__ d_a, half* __restrict__ d_b, ha
 }
 
 
-__global__ void hgemm_tensorcore(half *d_a, half *d_b, half *d_c, int M, int K, int N) {
+__global__ void hgemm_baseline(half *d_a, half *d_b, half *d_c, int M, int K, int N) {
     /*混合精度计算，使用tensorcore完成矩阵计算*/
     int k_tile = div_ceil(K, WMMA_K);
 
@@ -391,6 +394,38 @@ __global__ void hgemm_tensorcore(half *d_a, half *d_b, half *d_c, int M, int K, 
 
 }
 
+
+__global__ void hgemm_shared(half *d_a, half *d_b, half *d_c, int M, int K, int N) {
+    /*在baseline的基础上使用共享内存存放矩阵值
+    一共8个warp，每个warp处理16*K*16的矩阵乘法
+
+    */
+    int k_tile = div_ceil(K, BK);
+
+    int idx_row = blockIdx.y * BM;
+    int idx_col = blockIdx.x * BN;
+    int warp_id = threadIdx.x >> 5;
+
+    __shared__ half sdata_a[BM][BK];
+    __shared__ half sdata_b[BK][BN];
+
+    int load_a_smem_m = idx_col + warp_id * WMMA_M;
+    int load_a_smem_k = 
+
+    if (idx_row < M && idx_col < N) {
+        /*声明fragment*/
+        wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, half> frag_c[4];
+        wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> frag_a[2];
+        wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> frag_b[2];
+
+        for (int i=0; i < k_tile; ++i) {
+            /**/
+            
+        }
+    }
+
+
+}
 
 
 void cublas_hgemm(half* d_a, half* d_b, half* d_c, int M, int K, int N) {
@@ -491,7 +526,7 @@ void hgemm_kernel_launcher(half* a, half* b, half* c, int M, int K, int N) {
 
     dim3 block_h(WARP_SIZE);
     dim3 grid_h(div_ceil(M, WMMA_M), div_ceil(N, WMMA_N));
-    hgemm_tensorcore<<<grid_h, block_h>>>(d_a, d_b, d_c, M, K, N);
+    hgemm_baseline<<<grid_h, block_h>>>(d_a, d_b, d_c, M, K, N);
 
 
     /* 结果拷回host内存 */

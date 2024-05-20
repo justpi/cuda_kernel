@@ -34,24 +34,24 @@ int main(int argc, char **argv) {
     timer.start();
     hgemm_cublas_launcher(a, b, h_c, width, width, width);
     timer.stop();
-    timer.duration<Timer::ms>("gemm in gpu(warmup)");
+    timer.duration<Timer::ms>("gemm in cublas(warmup)");
 
     timer.start();
     hgemm_kernel_launcher(a, b, d_c, width, width, width);
     timer.stop();
-    timer.duration<Timer::ms>("gemm in gpu(warmup)");
+    timer.duration<Timer::ms>("gemm in kernel(warmup)");
 
 
     /* GPU */
     timer.start();
     hgemm_cublas_launcher(a, b, h_c, width, width, width);
     timer.stop();
-    timer.duration<Timer::ms>("gemm in gpu");
+    timer.duration<Timer::ms>("gemm in cublas");
 
     timer.start();
     hgemm_kernel_launcher(a, b, d_c, width, width, width);
     timer.stop();
-    timer.duration<Timer::ms>("gemm in gpu");
+    timer.duration<Timer::ms>("gemm in kernel");
 
     /* 验证结果 */
     compareMat(h_c, d_c, size);

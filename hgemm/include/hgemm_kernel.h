@@ -7,6 +7,11 @@
 
 #define SHARED_BLOCK_SIZE 32
 
+/* wmma shared tile size*/
+#define BM 128
+#define BN 128
+#define BK 32
+
 /*WMMA参数*/
 #define WMMA_M 16
 #define WMMA_K 16
