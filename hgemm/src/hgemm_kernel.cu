@@ -15,7 +15,7 @@ using namespace nvcuda;
 #define div_ceil(a, b) ((a + b - 1) / b)
 
 
-__global__ void gemm_baseline(half* d_a, half* d_b, half* d_c, int N, int K, int M) {
+__global__ void gemm_baseline(half* d_a, half* d_b, half* d_c, int M, int K, int N) {
     /* baseline:
         d_a: M * K
         d_b: K * N
@@ -35,7 +35,7 @@ __global__ void gemm_baseline(half* d_a, half* d_b, half* d_c, int N, int K, int
 }
 
 template <const int tile>
-__global__ void sgemm_tile(half* d_a, half* d_b, half* d_c, int M, int N, int K) {
+__global__ void sgemm_tile(half* d_a, half* d_b, half* d_c, int M, int K, int N) {
     /* 当K过大时，一个block无法存入所有值，需要对K进行分块
        在grid上添加一维z来存储K/TILE个block，每个thread计算TILE个乘加
     */
@@ -60,7 +60,7 @@ __global__ void sgemm_tile(half* d_a, half* d_b, half* d_c, int M, int N, int K)
 }
 
 
-__global__ void sgemm_tile_share(half* d_a, half* d_b, half* d_c, int M, int N, int K) {
+__global__ void sgemm_tile_share(half* d_a, half* d_b, half* d_c, int M, int K, int N) {
     /* 在tile的基础上，增加共享内存 */
     __shared__ half sdata_a[TILE][TILE];
     __shared__ half sdata_b[TILE][TILE];
@@ -91,7 +91,7 @@ __global__ void sgemm_tile_share(half* d_a, half* d_b, half* d_c, int M, int N, 
 }
 
 
-__global__ void gemm_share(half* d_a, half* d_b, half* d_c, int N, int K, int M) {
+__global__ void gemm_share(half* d_a, half* d_b, half* d_c, int M, int K, int N) {
     /* 在baseline的基础上添加共享内存来存放输入值
         TODO:待完成，目前的线程组织分配还有问题
     */
@@ -360,7 +360,7 @@ __global__ void gemm_prefetch(half* __restrict__ d_a, half* __restrict__ d_b, ha
 }
 
 
-__global__ void hgemm_tensorcore(half *d_a, half *d_b, half *d_c, int N, int K, int M) {
+__global__ void hgemm_tensorcore(half *d_a, half *d_b, half *d_c, int M, int K, int N) {
     /*混合精度计算，使用tensorcore完成矩阵计算*/
     int k_tile = div_ceil(K, WMMA_K);
 
@@ -393,20 +393,21 @@ __global__ void hgemm_tensorcore(half *d_a, half *d_b, half *d_c, int N, int K, 
 
 
 
-void cublas_gemm(half* d_a, half* d_b, half* d_c, int N, int K, int M) {
+void cublas_hgemm(half* d_a, half* d_b, half* d_c, int M, int K, int N) {
     /* cublas版本单精度矩阵乘法实现 */
     
     cublasHandle_t blas_handle;
     cublasCreate(&blas_handle);
-    half alpha = 1.0f;
-    half beta = 0.0f;
-    cublasHgemm(blas_handle, CUBLAS_OP_N, CUBLAS_OP_T, 
-                M, N, K, &alpha,
-                d_a, M, d_b, K, &beta, d_c, M 
+    half alpha = __float2half(1.0f);
+    half beta = __float2half(0.0f);
+    cublasHgemm(blas_handle, CUBLAS_OP_N, CUBLAS_OP_N, 
+                N, M, K, &alpha,
+                d_b, N, d_a, K, &beta, d_c, N 
                 );
+    cublasDestroy(blas_handle);
 }
 
-void hgemm_cublas_launcher(half* a, half* b, half* c, int N, int K, int M) {
+void hgemm_cublas_launcher(half* a, half* b, half* c, int M, int K, int N) {
     /* 分配GPU资源 */
     int sizeA = M*K;
     int sizeB = K*N;
@@ -423,7 +424,7 @@ void hgemm_cublas_launcher(half* a, half* b, half* c, int N, int K, int M) {
     CUDA_CHECK(cudaMemcpy(d_b, b, sizeB * sizeof(half), cudaMemcpyHostToDevice));
 
     /* cublas实现 */
-    cublas_gemm(d_a, d_b, d_c, N, K, M);
+    cublas_hgemm(d_a, d_b, d_c, M, K, N);
 
     /* 结果拷回host内存 */
     CUDA_CHECK(cudaMemcpy(c, d_c, sizeC * sizeof(half), cudaMemcpyDeviceToHost));
@@ -437,7 +438,7 @@ void hgemm_cublas_launcher(half* a, half* b, half* c, int N, int K, int M) {
 
 }
 
-void hgemm_kernel_launcher(half* a, half* b, half* c, int N, int K, int M) {
+void hgemm_kernel_launcher(half* a, half* b, half* c, int M, int K, int N) {
     /* 分配GPU资源 */
     int sizeA = M*K;
     int sizeB = K*N;
@@ -457,19 +458,19 @@ void hgemm_kernel_launcher(half* a, half* b, half* c, int N, int K, int M) {
     /* baseline：naive版本的gemm，每个线程处理一个output元素 */
     // dim3 block(BLOCK_SIZE, BLOCK_SIZE);
     // dim3 grid((M + BLOCK_SIZE - 1)/ BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE);
-    // gemm_baseline<<<grid, block>>>(d_a, d_b, d_c, N, K, M);
+    // gemm_baseline<<<grid, block>>>(d_a, d_b, d_c, M, K, N);
 
     /*优化一：对K使用tile*/
     // dim3 block_1(BLOCK_SIZE, BLOCK_SIZE);
     // dim3 grid_1((M + BLOCK_SIZE - 1)/ BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE, (K + TILE - 1) / TILE);
-    // sgemm_tile<TILE><<<grid_1, block_1>>>(d_a, d_b, d_c, M, N, K);
+    // sgemm_tile<TILE><<<grid_1, block_1>>>(d_a, d_b, d_c, M, K, N);
 
     // /* 优化二：tileK + shared mem */
     // dim3 block_2(BLOCK_SIZE, BLOCK_SIZE);
     // dim3 grid_2((M + BLOCK_SIZE - 1)/ BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE, (K + TILE - 1) / TILE);
-    // sgemm_tile_share<<<grid_2, block_2>>>(d_a, d_b, d_c, M, N, K);
+    // sgemm_tile_share<<<grid_2, block_2>>>(d_a, d_b, d_c, M, K, N);
     /* 优化二：使用共享内存+tile */
-    // gemm_share<<<grid, block>>>(d_a, d_b, d_c, N, K, M);
+    // gemm_share<<<grid, block>>>(d_a, d_b, d_c, M, K, N);
 
     // /* 优化三：使用tile+prefetch策略 */
     // const int BLOCK_SIZE_M = 128;     // 每个线程块计算的矩阵C的连续行的数量

@@ -31,7 +31,7 @@ void compareMat(half* h_data, half* d_data, int size) {
     for (int i = 0; i < size; i ++) {
         if (abs(h_data[i] - d_data[i]) > precision) {
             error = true;
-            printf("res is different in %d, cpu: %.8lf, gpu: %.8lf\n",i, __half2float(h_data[i]), __half2float(d_data[i]));
+            printf("res is different in %d, cublas: %.8lf, kernel: %.8lf\n",i, __half2float(h_data[i]), __half2float(d_data[i]));
             break;
         }
     }

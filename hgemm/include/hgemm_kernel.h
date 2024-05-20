@@ -13,6 +13,6 @@
 #define WMMA_N 16
 #define WARP_SIZE 32
 
-void hgemm_cublas_launcher(half* a, half* b, half* c, int N, int K, int M);
+void hgemm_cublas_launcher(half* a, half* b, half* c, int M, int K, int N);
 
-void hgemm_kernel_launcher(half* a, half* b, half* c, int N, int M, int K);
+void hgemm_kernel_launcher(half* a, half* b, half* c, int M, int K, int N);
