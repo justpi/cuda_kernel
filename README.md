@@ -26,6 +26,14 @@ SubCore中包含TensorCore，主要用于矩阵计算，CUDACore主要用于向�
 
 ![GPU内存层次结构](https://pic4.zhimg.com/v2-1b64c3fa661c6045c5323abb897080b7_r.jpg)
 
+软件和硬件之间的映射关系：
+
+- SubCore映射到CUDA中的warp
+- SM映射到CUDA中的block
+- 多个SM映射到CUDA中grid
+
+在软件向硬件映射时多了调度的逻辑：即一个SubCore可以运行多个warp，一个SM可以运行多个block，有限的SM可以运行远超其硬件数目的grid。
+
 # CUDA基础知识
 
 ## 1. 编程模型
@@ -100,8 +108,44 @@ Uniform寄存器为每个warp私有，每个warp最多可以使用64个，以UR�
 
 #### Load/Cache
 
+1. **数据load指令**
 
+    数据加载相关指令如下：
 
+    ```
+    LD: 通用指令，编译器在编译时无法推导出地址空间类型时的数据加载
+    LDG：从global memory加载数据
+    LDS：从shared memory加载数据
+    LDSM：从shared memory加载矩阵
+    LDL：从本地内存加载数据
+    ```
+
+    - LDG：支持8bits-128bits的数据加载，其中向量化的数据加载如LDG.128时GPU支持的最大的加载指令，一条指令可以夹杂i128bits的数据，对于同等规模的数据，使用更宽的加载指令可以减少warp对指令的调度次数，减少调度开销，减少MIO queue的是无数，避免由于queue满而造成阻塞。
+
+        ```
+        LDG.类型.向量.Cache控制.L2预取
+        ```
+
+    - LDGSTS（LoaD Global memory STore Shared memory）：可以实现不经过寄存器的全局内存到共享内存的数据搬运，减少寄存器的使用和依赖，在矩阵计算中，由于Multi Stage的矩阵计算有重要作用。
+        ```
+        LDGSTS, LDGDEPBAR, DEPBAR.LE SB0, 0x1 
+        ```
+
+    - LDS：和LDG类似；
+    - LDSM：主要在tensor core使用，是warp级指令，完成共享内存到寄存器的数据加载，然后将这些寄存器喂给Tensor Core指令完成矩阵计算；
+    - LDL：下面这三种情况会引入本地内存：
+        
+        1. 当线程计算需要局部数组，并且数组的下标不能被编译时计算得到；
+        2. 单线程的寄存器使用数目超过255；
+        3. 访问kernel数组常量时使用了不能被编译时确定的索引。
+
+2. Constant Cache
+
+    上面提到在SubCore中有constant cache机构，它和常量内存没有关系，它提供了一种广播语义，即当warp中所有线程都访问同一个数据时，它的访问速度和寄存器一样快。
+
+    另外kernel的参数需要广播给所有的执行线程，所以这个参数也是使用constant cache实现的。
+
+    在CUDA编程时可以使用`__constant__ __device__ float a`的方式调用constant cache。
 
 ### Tensor Core编程模型
 
