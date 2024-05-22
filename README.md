@@ -8,7 +8,23 @@ Tensor Core峰值性能：16x4x256x1.3GHz=20.8TFLOPs
 
 CUDA Core峰值性能：16x128x1x1.3GHz=2.6TFLOPs
 
+## 2. Ampere硬件结构
 
+GPU是一个高度并行的设备，其上装配了大量的计算单元，为了更好的组织这些计算单元，更充分的利用数据局部性和支持数据规约和同步的能力，GPU采用层次化的组织形式。整体而言，计算单元组织方面可以分为三个层次：
+
+- 最小计算机构为SubCore，其负责warp的执行
+- 4个SubCore组织成一个SM
+- 多个SM组织成GPU
+
+SubCore中包含TensorCore，主要用于矩阵计算，CUDACore主要用于向量化的浮点数与整数乘加计算，SFU（Special Function Unit，特殊函数单元）用于完成sin、exp2、sqrt、rcp等函数运算，同事SubCore内有程序状态核心存储机构寄存器文件，还有具有广播语义的常量内存，SubCore内还有用于外部数据加载和存储用的Load Store Unit。除此之外，SubCore里面还有warp schduler、branch unit、FP64等单元。
+
+存储单元组织方面分布如下：
+
+- SubCore内有寄存器和Constant Cache
+- SM内有四个SubCore公用的L1 Cache和Shared Memory
+- 所有SM共享L2 Cache（通过交叉开关，CrossBar）
+
+![GPU内存层次结构](https://pic4.zhimg.com/v2-1b64c3fa661c6045c5323abb897080b7_r.jpg)
 
 # CUDA基础知识
 
@@ -81,6 +97,11 @@ Predicate寄存器是每个线程私有，每个线程最多使用8个，在SSAS
 uniform寄存器主要是在warp level使用，通过使用uniform 寄存器，可以减少私有寄存器的使用量，从而可以减少warp内线程对通用寄存器的使用，从而在这个SM上可以运行更多的warp来提升并发度。
 
 Uniform寄存器为每个warp私有，每个warp最多可以使用64个，以UR为前缀，Uniform Predicate寄存器以UP为前缀，单个warp最多可以使用7个。一般最后一个寄存器都是常量寄存器。
+
+#### Load/Cache
+
+
+
 
 ### Tensor Core编程模型
 
