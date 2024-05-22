@@ -48,6 +48,49 @@ CUDA Core峰值性能：16x128x1x1.3GHz=2.6TFLOPs
 
 ## 2. 运行模型
 
+### bank conflict
+
+1. shared memory结构
+
+从[官方文档](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html?highlight=clock#shared-memory-5-x)可以知道，放在shared memory中的数据是以4bytes（即32bits）作为一个word，依次放在 32 个 banks 中。所以，第 i 个 word，就存放在第 ( i mod 32 ) 个 bank 上。
+
+每个bank在每个时钟周期的带宽是32bits，即每个bank一个时钟周期只能访问4个bytes数据。
+
+所以 shared memory 在每个 cycle 的 bandwidth 为 32 * 32 bits = 32 * 4 bytes = 128 bytes。
+
+shared memory访存方式有两种，broadcast和bank conflict。
+
+- 一个warp中每个thread只访问4bytes（32bits）数据：
+
+    - broadcast：一般出现在多个thread访问同一个bank同一地址的情况。当多个 thread 访问同一个 bank 内的同一个 word，就会触发 broadcast 机制。这个 word 会同时发给对应的 thread；
+
+    - bank conflict：一般出现在多个thread访问同一个bank的不同地址的情况。当多个 thread 访问同一个 bank 内的不同 word 时，就会产生 bank conflict。于是请求会被拆分成多次 memory transaction，串行地被发射（issue）出去执行。（比如 2-way bank conflict，就拆分成 2 次 transaction）
+
+- 一个warp中每个thread访问64 bits数据（如通过float2、uint2数据类型，LDS.64指令），这时一个warp访问超过128bytes，CUDA会默认将一个warp拆分乘两个half warp，每个half warp产生一次memory transaction，故一共会有两次transaction：
+
+    - broadcast：合并规则是活跃线程和下1/2个id线程不活跃或者其访存地址一致，这时会发生broadcast。
+
+    - bank conflict：只有在一个half warp中出现多个thread访问一个bank的时候才会产生bank conflict，因为一个half warp表示一个memory transaction。
+
+- 一个warp中每个thread访问128bits数据（如通过float4、int4数据类型，LDS.128指令），这时half warp进一步拆分乘quarter warp，每个quarter warp产生一次memory transaction：
+    
+    - broadcast：合并规则是活跃线程和下1/2个id线程不活跃或者其访存地址一致，这时会发生broadcast。
+
+    - bank conflict：只有在一个quarter warp中出现多个thread访问一个bank的时候才会产生bank conflict，因为一个quarter warp表示一个memory transaction。
+
+2. 矩阵乘法
+
+矩阵乘法中一般会选择使用Z-order来重新排布读取顺序，通过这种方式，矩阵乘法才能有效使用前面的broadcast和避免bankconflict，下面是chatGPT的解释：
+
+> Z-order，也被称为Morton-order或Morton code，是一种将多维数据映射到一维数据的方法。在矩阵乘法的上下文中，Z-order可以用来优化数据在内存中的存储布局，从而提高缓存的使用效率。
+>
+> 在传统的矩阵存储中，二维数组通常按行或按列顺序存储。例如，在C语言中，二维数组是按行的顺序存储的（行优先），而在Fortran中，是按列的顺序存储的（列优先）。这种存储方式在进行某些操作时可能不是最优的，特别是在矩阵乘法这样的操作中，访问不连续的内存地址会导致缓存未命中，从而降低性能。
+>
+> Z-order曲线尝试解决这个问题，它通过一种特殊的方式来遍历矩阵的元素，以便保持数据访问的局部性。具体来说，Z-order曲线是一种空间填充曲线，它尝试在遍历二维（或更高维）数据时保持相邻数据点在物理存储（一维）中也是相邻的。
+>
+> 在矩阵乘法中，可以使用Z-order来重新排列矩阵的数据，使得在计算时访问的数据在物理内存中尽可能地连续，这样可以提高缓存的命中率，因为缓存是以块的形式工作的，连续的数据访问模式可以减少缓存加载和替换的次数。
+>
+> Z-order在矩阵乘法中的应用通常是高性能计算或优化库中的一个高级特性，因为它需要重新安排数据并可能需要额外的索引计算来确定元素的位置。然而，对于大规模的矩阵乘法操作，这种优化可以显著提高性能。
 
 ## 3. 优化方式
 
