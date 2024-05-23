@@ -337,6 +337,7 @@ shared memory访存方式有两种，broadcast和bank conflict。
         - 作用：
 
 第二类是Active mask query，作用是返回一个32位的掩码，这个掩码表示哪些线程处于活动状态：
+
     - __activemask：
         - 函数声明：
             ```c++
@@ -344,6 +345,7 @@ shared memory访存方式有两种，broadcast和bank conflict。
         - 作用：
 
 第三类是线程同步函数，作用是同步warp中的线程，并提供内存隔离
+
     - __syncwarp：
         - 函数声明：
             ```c++
@@ -487,6 +489,16 @@ online softmax在每次循环中只需访存2次，写入1次，而safe softmax�
 transpose算子很简单，两次访存，没有计算。
 
 ## 6. conv
+
+卷积的输入输出对应关系公式如下：
+
+$$
+H_{o}= \lfloor \frac {H_i + 2 \times padding_h - dilation_h \times (H_k-1)-1} {stride_h}\rfloor + 1
+$$
+
+$$
+W_{o}= \lfloor \frac {W_i + 2 \times padding_w - dilation_w \times (W_k-1)-1} {stride_w}\rfloor + 1
+$$
 
 ### 1. naive版本
 

@@ -4,6 +4,14 @@ project(conv LANGUAGES CXX CUDA)
 
 find_package(CUDA REQUIRED)
 
+set(CMAKE_CUDA_ARCHITECTURES 86)
+
+find_library(CUDNN_LIBRARY
+             NAMES cudnn
+             PATHS /usr/local/cuda/lib64 /usr/local/cudnn/lib64
+             PATH_SUFFIXES lib64 lib
+             NO_DEFAULT_PATH)
+
 # Include directories for header files
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
@@ -20,14 +28,14 @@ file(GLOB_RECURSE HEADER_FILES "include/*.h" "include/*.hpp" "include/*.cuh" "co
 add_executable(conv ${CPP_SOURCES} ${CU_SOURCES} ${HEADER_FILES})
 
 # 链接cuBLAS库
-target_link_libraries(conv ${CUDA_cublas_LIBRARY})
+target_link_libraries(conv ${CUDA_cublas_LIBRARY} ${CUDNN_LIBRARY})
 
 # switch Debug/Release
 if (TYPE STREQUAL "Debug")
     message("Debug mode:")
     add_definitions(-DDEBUG)
-    target_compile_options(conv PRIVATE -g -O0 -lineinfo)
+    target_compile_options(conv PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-g -O0 -lineinfo --generate-code arch=compute_86,code=sm_86>)
 elseif(TYPE STREQUAL "Release")
     message("Release mode:")
-    target_compile_options(conv PRIVATE -O3)
+    target_compile_options(conv PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3 --generate-code arch=compute_86,code=sm_86>)
 endif()
