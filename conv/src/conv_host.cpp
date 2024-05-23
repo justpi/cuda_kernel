@@ -7,7 +7,7 @@ void conv_host_naive(float* input, float* output, float* weight,
     /*计算输出维度*/
     int height_o = (height + 2 * pad_h - (kh - 1) - 1) / stride_h + 1;
     int width_o = (width + 2 * pad_w - (kw - 1) - 1) / stride_w + 1;
-
+    
     for (int b=0; b < batch; ++b) {
         for (int c_out=0; c_out < out_channel; ++c_out) {
             for(int h_o=0; h_o < height_o; ++h_o) {
@@ -19,12 +19,15 @@ void conv_host_naive(float* input, float* output, float* weight,
                         for (int w_k=0; w_k < kw; ++w_k) {
                             int in_h = h_o * stride_h + h_k - pad_h;
                             int in_w = w_o * stride_w + w_k - pad_w;
-                            for (int c_in=0; c_in < in_channel; ++c_in) {
-                                /**/
-                                int weight_idx = c_out * in_channel * kh * kw + c_in * kh * kw + h_k * kw + w_k;
-                                int input_idx = b * in_channel * height * width + c_in * height * width + in_h * width + in_w;
-                                output[out_idx] += weight[weight_idx] * input[input_idx];
+                            if (in_h >= 0 && in_h < height && in_w >= 0 && in_w < width) {  // 确保在有效范围内
+                                for (int c_in=0; c_in < in_channel; ++c_in) {
+                                    /*计算一个输入特征点和对应卷积核的点积*/
+                                    int weight_idx = c_out * in_channel * kh * kw + c_in * kh * kw + h_k * kw + w_k;
+                                    int input_idx = b * in_channel * height * width + c_in * height * width + in_h * width + in_w;
+                                    output[out_idx] += weight[weight_idx] * input[input_idx];
+                                }
                             }
+                            
                         }
                     }
                 }
