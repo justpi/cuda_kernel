@@ -38,6 +38,46 @@ SubCore中包含TensorCore，主要用于矩阵计算，CUDACore主要用于向�
 
 ## 1. 编程模型
 
+### Stream
+
+CUDA Strean是GPU上任务的执行队列，所有的CUDA操作（包括kernel和内存拷贝等）都在stream上执行。Stream有两种：
+
+- 隐式流：也叫默认流，如果没有显示指定流，所有的CUDA操作都会在默认流中运行，此时此流是和CPU端计算是同步的，意思是CPU的计算需要等待上面的GPU运算计算完毕才会开始，会被阻塞在那里；
+
+- 显式流：显式申请的流，显示申请的流和Host端是异步执行的，不同的显式流之间也是异步执行的。
+
+### graph
+
+可以用来把包含若干个核函数的任务打包起来，包括核函数之间的依赖关系，形成一个计算图。引入graph有下面的好处：
+
+cuda_graph的引入是为了解决kernel间launch的间隙时间问题的，尤其是有一堆小kernel,每个kernel启动也会带来一些开销，如果这些kernel足够多，那么就可能会影响系统的整体性能，cuda_graph的引入就是为了解决这个问题的，它会将stream内的kernel视为一整个graph，从而减少kernel的launch间隙时间。
+
+- 减少了CPU和GPU之间的交互：一旦图被捕获，它可以在没有CPU介入的情况下重放，这减少了每次推理时的CPU开销。
+- 更高的GPU利用率：因为图中的操作可以被优化和重排，以最大化GPU的利用率。
+- 更低的推理延迟：减少了CPU到GPU的往返时间，从而降低了整体的推理延迟。
+
+
+
+下面是创建一个CUDA图要用到的函数：
+
+```c++
+// Start capture on CUDA stream s. Mode is typically cudaStreamCaptureModeGlobal.
+cudaStreamBeginCapture(cudaStream_t s, cudaStreamCaptureMode mode );
+// End capture on CUDA stream s. A pointer to the resulting graph is placed in graph.
+cudaStreamEndCapture(cudaStream_t s, cudaGraph_t * graph);
+// The argument gexec is set to an executable version of the graph in graph. 
+// The last three arguments provide detailed error information and can be set to
+// nullptr, nullptr and 0 if this information is not needed
+cudaGraphInstantiate(cudaGraphExec_t* gexec, cudaGraph_t graph, cudaGraphNode_t* errornode, char* errorlog, size_t errorlogsize );
+// Launch the executable graph gexec in stream s. 
+// The launch stream does not have to be the same as the capture stream.
+cudaGraphLaunch(cudaGraphExec_t gexec, cudaStream_t s );
+```
+
+在tensorrt中可以将engine包装成一个graph，要启动engine时启动这个graph即可，这样可以缩减掉很多小的kernel的启动时间。
+
+
+
 ### SSAS指令集架构
 
 #### load/store指令集
@@ -495,6 +535,7 @@ for(b:B) {
 ### 2. im2col+gemm
 
 根据前面的naive实现，我们将输入的一个特征图进行展开，将每次滑动对应的特征值拉平成一个列向量，一共需要进行HW次拉平，所以会产生一个$H_kW_k * HK$的二维矩阵，而卷积核则拉平成一个行向量；K个卷积核组合成一个$K * H_kW_k$的矩阵；最终将$weight \otimes Input$则可以一次计算得到输入的一个特征图的输出结果。一共有C个特征图，计算C次此矩阵，最终对应位置相加得到最终结果。
+
 
 
 
