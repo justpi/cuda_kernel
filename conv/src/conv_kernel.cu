@@ -74,7 +74,7 @@ void conv_cudnn_launcher(float* input, float* output, float* weight,
 
     /*分配显存*/
     int input_size = batch * in_channel * height * width;
-    int weight_size = out_channel * kheight * kwidth;
+    int weight_size = out_channel * in_channel * kheight * kwidth;
     int output_size = b_out * c_out * h_out * w_out;
 
     float *input_d, *weight_d, *output_d;
