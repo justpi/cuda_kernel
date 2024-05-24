@@ -3,6 +3,8 @@
 #include <cudnn.h>
 #include <cublas_v2.h>
 
+#define div_ceil(a, b) ((a + b - 1) / b)
+
 void conv_cudnn_launcher(float* input, float* output, float* weight, 
                         int batch, int in_channel, int out_channel, int height, int width, 
                         int kheight, int kwidth, int pad_height, int pad_width, int stride_height, int stride_width) {
@@ -118,4 +120,52 @@ void conv_cudnn_launcher(float* input, float* output, float* weight,
     cudnnDestroyConvolutionDescriptor(conv_desc);
     cudnnDestroy(cudnn);
     
+}
+
+__global__ void conv_implicit_gemm_base(float* input, float* output, float* weight, 
+    int batch, int in_channel, int out_channel, int height, int width, int height_out, int width_out,
+    int kheight, int kwidth, int pad_height, int pad_width, int stride_height, int stride_width) {
+    /*首先计算当前线程的输出索引，然后计算weight的im2col索引，从而计算出weight的各项参数，最后计算input的各项参数*/
+    __shared__ float sdata_i[TILE][TILE];
+    __shared__ float sdata_w[TILE][TILE];
+    const int out_ch = blockIdx.y * TILE + threadIdx.y;
+    const int out_hw = blockIdx.x * TILE + threadIdx.x;
+    const int out_w = out_hw % height_out;
+    const int out_h = out_hw / height_out;
+
+}
+
+
+void conv_kernel_launcher(float* input, float* output, float* weight, 
+    int batch, int in_channel, int out_channel, int height, int width, 
+    int kheight, int kwidth, int pad_height, int pad_width, int stride_height, int stride_width) {
+    /*分配显存*/
+    int height_out = (height + 2 * padding_h - (kheight - 1) - 1) / stride_h + 1;
+    int width_out = (width + 2 * padding_w - (kwidth - 1) - 1) / stride_w + 1;
+
+    int size_input = batch * in_channel * height * width;
+    int size_output = batch * out_channel * height_out * width_out;
+    int size_weight = out_channel * in_channel * kheight * kwidth;
+
+    float *input_d, *weight_d, *output_d;
+    CUDA_CHECK(cudaMalloc(&input_d, size_input * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&weight_d, size_weight * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&output_d, size_output * sizeof(float)));
+
+    CUDA_CHECK(cudaMemcpy(input_d, input, size_input * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(weight_d, weight, size_weight * sizeof(float), cudaMemcpyHostToDevice));
+
+    /*baseline*/
+
+    dim3 block_base(TILE, TILE);
+    dim3 grid_base(div_ceil(height_out * width_out, TILE), div_ceil(out_channel, TILE), batch);
+    conv_implicit_gemm_base<<<grid_base, block_base>>>(input_d, output_d, weight_d, batch, in_channel, out_channel, height, width, kheight, kwidth, pad_height, pad_width, stride_height, stride_width);
+
+    CUDA_CHECK(cudaMemcpy(output, output_d, size_output * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    CUDA_CHECK(cudaFree(output_d));
+    CUDA_CHECK(cudaFree(weight_d));
+    CUDA_CHECK(cudaFree(input_d));
+
 }
