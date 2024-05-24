@@ -566,6 +566,18 @@ $$
 Arthmetic Intensity= \frac {ops} {bytes}=\frac {2 \cdot (NPQ) \cdot (CRS) \cdot K} {2 \cdot (NCHW + KCRS + NKPQ)}
 $$
 
+上面的im2col+gemm的方式需要存入一个im2col的矩阵，然后在gemm阶段再重新读入进行计算，这种方式的访存会比较差，所以现在一般采用implicit_im2col的方式来替代im2col+gemm的方式，具体baseline的核函数思路如下：
+
+- block线程组织： 根据输出大小 $N \times K \times P \times Q$ ，和naive的函数一样每个线程处理一个输出值，但是不同的是使用shared memory存储im2col的input值和weight值。我们设置一个二维的block，分别拆分$C$ 和 $HW$ 两个维度。
+
+- grid线程组织：根据维度，设置x轴维度为$\frac {PQ} {TILE}$，设置y轴维度为 $\frac {K} {TILE}$ ，设置z轴维度为 $N$
+
+- 共享内存：设置两个共享内存，分别存放临时的input的im2col值和weight的im2col值，由于共享内存空间有限，无法直接存入 $CRS$ 所有的值，故采用分块计算的方式，依次读取input和weight对应的区域 $\frac{CRS} {TILE}$ 存入共享内存，然后每次迭代从读取其中部分数据完成计算，思路与矩阵乘法一致。
+
+- 输入与权重的对应关系：目前im2col输出的索引是 
+$$out_{c} = blockIdx.y * TILE + threadIdx.y$$ 
+$$out_{PQ}=blockIdx.x * TILE + threadIdx.x$$
+我们需要根据上面的索引去反推weight的索引和input的索引，weight需要拿到 $c_o,c_{i},kh,kw$ ，input需要拿到 $b, c_i, h_i, w_i$。这里需要注意需要先拿到weight的索引，然后才能拿到input的索引。
 
 ### 3. winograd
 
