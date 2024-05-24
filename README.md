@@ -490,6 +490,12 @@ transpose算子很简单，两次访存，没有计算。
 
 ## 6. conv
 
+卷积的基本实现过程如下图所示：
+
+![卷积基本实现过程](https://docscontent.nvidia.com/dita/00000189-949d-d46e-abe9-bcdf9f8c0000/deeplearning/performance/dl-performance-convolutional/graphics/convo-tensor.svg)
+
+对于一个CHW的输入张量，有一个filter（CRS）在此HW上滑动，在每次滑动位置计算卷积操作（逐位置点乘再求和），可以计算得到PQ的特征图；一共K个filter，就可以产生KPQ的张量，加上前面的N，得到此算子计算后的NKPQ张量。
+
 卷积的输入输出对应关系公式如下：
 
 $$
@@ -549,6 +555,7 @@ for(b:B) {
 根据前面的naive实现，我们将输入的一个特征图进行展开，将每次滑动对应的特征值拉平成一个列向量，一共需要进行HW次拉平，所以会产生一个$H_kW_k * HK$的二维矩阵，而卷积核则拉平成一个行向量；K个卷积核组合成一个$K * H_kW_k$的矩阵；最终将$weight \otimes Input$则可以一次计算得到输入的一个特征图的输出结果。一共有C个特征图，计算C次此矩阵，最终对应位置相加得到最终结果。
 
 
+### 3. winograd
 
 
 ## 7. layernorm
