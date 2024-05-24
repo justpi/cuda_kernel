@@ -352,6 +352,12 @@ shared memory访存方式有两种，broadcast和bank conflict。
             ```
         - 作用：
 
+### 3.2 调整线程组织方式
+
+1. block设置：1024的限值；
+
+2. grid设置：尽量设置为当前硬件拥有SM的倍数；
+
 # 算子开发
 
 ## 1. 矩阵乘法-sgemm
@@ -553,6 +559,12 @@ for(b:B) {
 ### 2. im2col+gemm
 
 根据前面的naive实现，我们将输入的一个特征图进行展开，将每次滑动对应的特征值拉平成一个列向量，一共需要进行HW次拉平，所以会产生一个$H_kW_k * HK$的二维矩阵，而卷积核则拉平成一个行向量；K个卷积核组合成一个$K * H_kW_k$的矩阵；最终将$weight \otimes Input$则可以一次计算得到输入的一个特征图的输出结果。一共有C个特征图，计算C次此矩阵，最终对应位置相加得到最终结果。
+
+由上面的基本过程可以知道，对于一个NCHW的输入张量，和一个KCRS的filter张量，可以得到一个NKPQ的输出张量，如果使用im2col+gemm的方式来进行计算，可以将其转换为一个 $NPQ \times CRS$ 的矩阵A和一个 $CRS \times K$ 的矩阵B的乘积，其计算密度计算公式如下：
+
+$$
+Arthmetic Intensity= \frac {ops} {bytes}=\frac {2 \cdot (NPQ) \cdot (CRS) \cdot K} {2 \cdot (NCHW + KCRS + NKPQ)}
+$$
 
 
 ### 3. winograd
