@@ -45,25 +45,37 @@ int main(int argc, char **argv) {
     initMatrix(weight, size_weight, min, max, seed+1);
 
     /* CPU */
-    timer.start();
-    conv_host_naive(input, output_h, weight, batch, channel, knum, height, width, 
-            kheight, kwidth, padding_h, padding_w, stride_h, stride_w);
-    timer.stop();
-    timer.duration<Timer::ms>("conv in cpu");
+//     timer.start();
+//     conv_host_naive(input, output_h, weight, batch, channel, knum, height, width, 
+//             kheight, kwidth, padding_h, padding_w, stride_h, stride_w);
+//     timer.stop();
+//     timer.duration<Timer::ms>("conv in cpu");
 
     /* GPU warmup */
     timer.start();
-    conv_cudnn_launcher(input, output_d, weight, batch, channel, knum, height, width, 
+    conv_cudnn_launcher(input, output_h, weight, batch, channel, knum, height, width, 
             kheight, kwidth, padding_h, padding_w, stride_h, stride_w);
     timer.stop();
-    timer.duration<Timer::ms>("conv in gpu(warmup)");
+    timer.duration<Timer::ms>("conv cudnn in gpu(warmup)");
+
+    timer.start();
+    conv_kernel_launcher(input, output_d, weight, batch, channel, knum, height, width, 
+            kheight, kwidth, padding_h, padding_w, stride_h, stride_w);
+    timer.stop();
+    timer.duration<Timer::ms>("conv kernel in gpu(warmup)");
 
     /* GPU */
     timer.start();
-    conv_cudnn_launcher(input, output_d, weight, batch, channel, knum, height, width, 
+    conv_cudnn_launcher(input, output_h, weight, batch, channel, knum, height, width, 
             kheight, kwidth, padding_h, padding_w, stride_h, stride_w);
     timer.stop();
-    timer.duration<Timer::ms>("conv in gpu(warmup)");
+    timer.duration<Timer::ms>("conv cudnn in gpu(warmup)");
+
+    timer.start();
+    conv_kernel_launcher(input, output_d, weight, batch, channel, knum, height, width, 
+            kheight, kwidth, padding_h, padding_w, stride_h, stride_w);
+    timer.stop();
+    timer.duration<Timer::ms>("conv kernel in gpu(warmup)");
 
     /* 验证结果 */
     compareMat(output_h, output_d, size_output);
