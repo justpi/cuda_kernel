@@ -5,6 +5,8 @@
 
 #define div_ceil(a, b) ((a + b - 1) / b)
 
+#define FETCH_FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
+
 void conv_cudnn_launcher(float* input, float* output, float* weight, 
                         int batch, int in_channel, int out_channel, int height, int width, 
                         int kheight, int kwidth, int pad_height, int pad_width, int stride_height, int stride_width) {
@@ -126,8 +128,8 @@ __global__ void conv_implicit_gemm_base(float* input, float* output, float* weig
     int batch, int in_channel, int out_channel, int height, int width, int height_out, int width_out,
     int kheight, int kwidth, int pad_height, int pad_width, int stride_h, int stride_w) {
     /*首先计算当前线程的输出索引，然后计算weight的im2col索引，从而计算出weight的各项参数，最后计算input的各项参数*/
-    __shared__ float sdata_i[TILE][TILE];
-    __shared__ float sdata_w[TILE][TILE];
+    __shared__ float sdata_i[TILE][TILE+1];
+    __shared__ float sdata_w[TILE][TILE+1];
     const int out_ch = blockIdx.y * TILE + threadIdx.y;
     const int out_hw = blockIdx.x * TILE + threadIdx.x;
     const int b = blockIdx.z;
@@ -175,6 +177,135 @@ __global__ void conv_implicit_gemm_base(float* input, float* output, float* weig
 }
 
 
+__global__ void conv_implicit_gemm_unroll(float* input, float* output, float* weight, 
+    int batch, int in_channel, int out_channel, int height, int width, int height_out, int width_out,
+    int kheight, int kwidth, int pad_height, int pad_width, int stride_h, int stride_w) {
+    /*首先计算当前线程的输出索引，然后计算weight的im2col索引，从而计算出weight的各项参数，最后计算input的各项参数*/
+    __shared__ float sdata_i[TILE][TILE];
+    __shared__ float sdata_w[TILE][TILE];
+    const int out_ch = blockIdx.y * TILE + threadIdx.y;
+    const int out_hw = blockIdx.x * TILE + threadIdx.x;
+    const int b = blockIdx.z;
+    const int ty = threadIdx.y;
+    const int tx = threadIdx.x;
+    const int out_w = out_hw % height_out;
+    const int out_h = out_hw / height_out;
+    /*输出纬度为K*PQ，矩阵A为K*CRS，，im2col_weight的形状是K*CRS，表示矩阵A的M和K，矩阵B为CRS*PQ，计算CRS和PQ，即为im2col_input的K和N*/
+    // const int weight_im2col_M = out_channel;
+    const int weight_im2col_K = in_channel * kheight * kwidth;
+    // const int input_im2col_N = height_out * width_out;
+    const int k_tile = div_ceil(weight_im2col_K, TILE);
+    int in_ch, kh, kw, in_h, in_w;
+    int idx_k;
+    float output_value = 0.0f;
+    #pragma unroll
+    for (int i=0; i < k_tile; ++i) {
+        /*计算weight的索引*/
+        idx_k = i * TILE + ty;
+        in_ch = idx_k / (kheight * kwidth);
+        kh = (idx_k % (kheight * kwidth)) / kwidth;
+        kw = idx_k % kwidth;
+        /*计算input索引*/
+        in_h = out_h * stride_h + kh - pad_height;
+        in_w = out_w * stride_w + kw - pad_width;
+        /*将weight矩阵读取到shared memory中*/
+        if (i * TILE + tx >= weight_im2col_K) sdata_w[ty][tx] = 0.0f;
+        else {
+            sdata_w[ty][tx] = weight[out_ch * weight_im2col_K + i * TILE + tx];
+        }
+        /*将input矩阵读取到shared memory中*/
+        if (in_h >=0 && in_h < height && in_w >= 0 && in_w < width) {
+            sdata_i[ty][tx] = input[b * in_channel * height * width + in_ch * height * width + in_h * width + in_w];
+        }
+        else sdata_i[ty][tx] = 0.0f;
+        __syncthreads();
+        /*计算当前tile的输出值*/
+        #pragma unroll
+        for (int k=0; k < TILE; ++k) {
+            output_value += sdata_w[ty][k] * sdata_i[k][tx];
+        }
+        __syncthreads();
+
+    }
+    if (out_ch < out_channel && out_hw < height_out * width_out)
+    output[b * out_channel * height_out * width_out + out_ch * height_out * width_out + out_h * width_out + out_w] = output_value;
+
+}
+
+
+__global__ void conv_implicit_gemm_vec4(float* input, float* output, float* weight, 
+    int batch, int in_channel, int out_channel, int height, int width, int height_out, int width_out,
+    int kheight, int kwidth, int pad_height, int pad_width, int stride_h, int stride_w) {
+    /*首先计算当前线程的输出索引，然后计算weight的im2col索引，从而计算出weight的各项参数，最后计算input的各项参数*/
+    __shared__ float sdata_i[TILE][TILE];
+    __shared__ float sdata_w[TILE][TILE];
+    const int out_ch = blockIdx.y * TILE + threadIdx.y;
+    const int out_hw = blockIdx.x * TILE + threadIdx.x;
+    const int b = blockIdx.z;
+    const int ty = threadIdx.y;
+    const int tx = threadIdx.x;
+    const int lane_id = ty * blockDim.x + tx;
+    const int out_w = out_hw % height_out;
+    const int out_h = out_hw / height_out;
+    /*输出纬度为K*PQ，矩阵A为K*CRS，，im2col_weight的形状是K*CRS，表示矩阵A的M和K，矩阵B为CRS*PQ，计算CRS和PQ，即为im2col_input的K和N*/
+    // const int weight_im2col_M = out_channel;
+    const int weight_im2col_K = in_channel * kheight * kwidth;
+    // const int input_im2col_N = height_out * width_out;
+
+    /*使用寄存器存放向量化访存的值*/
+    float frag_w[4];
+    float frag_i[4];
+    const int k_tile = div_ceil(weight_im2col_K, TILE);
+    int in_ch, kh, kw, in_h, in_w;
+    float output_value = 0.0f;
+    #pragma unroll
+    for (int i=0; i < k_tile; ++i) {
+        /*计算weight的索引*/
+        int idx_k = i * TILE + ty;  // input的row索引
+        in_ch = idx_k / (kheight * kwidth);
+        kh = (idx_k % (kheight * kwidth)) / kwidth;
+        kw = idx_k % kwidth;
+        /*计算input索引*/
+        in_h = out_h * stride_h + kh - pad_height;
+        in_w = out_w * stride_w + kw - pad_width;
+        if (lane_id %4 == 0) {
+            /*将weight矩阵读取到shared memory中*/
+            if (i * TILE + tx >= weight_im2col_K) {
+                sdata_w[ty][tx] = 0.0f;
+                sdata_w[ty][tx+1] = 0.0f;
+                sdata_w[ty][tx+2] = 0.0f;
+                sdata_w[ty][tx+3] = 0.0f;
+
+            }
+            else {
+                FETCH_FLOAT4(frag_w) = FETCH_FLOAT4(weight[out_ch * weight_im2col_K + i * TILE + tx]);
+                sdata_w[ty][tx] = frag_w[0];
+                sdata_w[ty][tx+1] = frag_w[1];
+                sdata_w[ty][tx+2] = frag_w[2];
+                sdata_w[ty][tx+3] = frag_w[3];
+            }
+        }
+        /*将input矩阵读取到shared memory中*/
+        if (in_h >=0 && in_h < height && in_w >= 0 && in_w < width) {
+            sdata_i[ty][tx] = input[b * in_channel * height * width + in_ch * height * width + in_h * width + in_w];
+        }
+        else sdata_i[ty][tx] = 0.0f;
+        __syncthreads();
+        
+        /*计算当前tile的输出值*/
+        #pragma unroll
+        for (int k=0; k < TILE; ++k) {
+            output_value += sdata_w[ty][k] * sdata_i[k][tx];
+        }
+        __syncthreads();
+
+    }
+    if (out_ch < out_channel && out_hw < height_out * width_out)
+    output[b * out_channel * height_out * width_out + out_ch * height_out * width_out + out_h * width_out + out_w] = output_value;
+
+}
+
+
 void conv_kernel_launcher(float* input, float* output, float* weight, 
     int batch, int in_channel, int out_channel, int height, int width, 
     int kheight, int kwidth, int pad_height, int pad_width, int stride_height, int stride_width) {
@@ -198,7 +329,14 @@ void conv_kernel_launcher(float* input, float* output, float* weight,
 
     dim3 block_base(TILE, TILE);
     dim3 grid_base(div_ceil(height_out * width_out, TILE), div_ceil(out_channel, TILE), batch);
-    conv_implicit_gemm_base<<<grid_base, block_base>>>(input_d, output_d, weight_d, batch, in_channel, out_channel, height, width, height_out, width_out, kheight, kwidth, pad_height, pad_width, stride_height, stride_width);
+    // conv_implicit_gemm_base<<<grid_base, block_base>>>(input_d, output_d, weight_d, batch, in_channel, out_channel, height, width, height_out, width_out, kheight, kwidth, pad_height, pad_width, stride_height, stride_width);
+
+    /*展开循环*/
+    // conv_implicit_gemm_unroll<<<grid_base, block_base>>>(input_d, output_d, weight_d, batch, in_channel, out_channel, height, width, height_out, width_out, kheight, kwidth, pad_height, pad_width, stride_height, stride_width);
+
+    /*向量化访存*/
+    conv_implicit_gemm_vec4<<<grid_base, block_base>>>(input_d, output_d, weight_d, batch, in_channel, out_channel, height, width, height_out, width_out, kheight, kwidth, pad_height, pad_width, stride_height, stride_width);
+
 
     CUDA_CHECK(cudaMemcpy(output, output_d, size_output * sizeof(float), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaDeviceSynchronize());
