@@ -358,6 +358,10 @@ shared memory访存方式有两种，broadcast和bank conflict。
 
 2. grid设置：尽量设置为当前硬件拥有SM的倍数；
 
+###3.3 Cooperative Groups
+
+TODO:待完善
+
 # 算子开发
 
 ## 1. 矩阵乘法-sgemm
