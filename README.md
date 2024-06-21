@@ -358,6 +358,10 @@ shared memory访存方式有两种，broadcast和bank conflict。
 
 2. grid设置：尽量设置为当前硬件拥有SM的倍数；
 
+###3.3 Cooperative Groups
+
+TODO:待完善
+
 # 算子开发
 
 ## 1. 矩阵乘法-sgemm
@@ -623,5 +627,51 @@ $$
 
 
 ## 8. attention
+
+### 计算公式
+标准的attention的计算公式如下，其中$q \in R^{N_q \times d_q}$, $k \in R^{N_k \times d_k}$, $v \in R^{N_v \times d_v}$，$Q,K,V \in R^{N \times d}$：
+
+$$
+Attention(q,k,v)=softmax(\frac {QK^T} {\sqrt{d_k}})V
+$$
+
+$$
+Q = W^Q \times q
+$$
+
+$$
+K = W^K \times k
+$$
+
+$$
+V = W^V \times v
+$$
+
+多头注意力的计算公式如下，在实际的MHA计算中，往往还是使用标准attention，但是先将经过线性层的$Q,K,V$均根据头的数目进行拆分，组织成$(B*8, N, d // 8)$，在计算完成后在`reshape`回来：
+
+$$
+MHA(Q,K,V)=Concat(head_1,head_2,...,head_h)
+$$
+
+$$
+head_i = Attention(Q_i,K_i,V_i)
+$$
+
+### 计算效率分析
+
+在计算过程中，分别分析访存和计算，attention的计算过程如下：
+```
+1. 分block从主存加载矩阵Q,K，计算S = QK^T, 然后将矩阵S写回.
+2. 从主存加载S，计算P=softmax(S),然后写回P.
+3. 分block从主存加载矩阵P和V，计算O=PV，将O写回主存.
+```
+
+按步骤分析访存与计算：
+
+1. 步骤1：加载两个矩阵有 $2Nd$ 访存，计算是 $N^2d$次计算, 结果写回是$N^2$访存，所以步骤1中有 $(2Nd + N^2)$次访存，有$N^2$次计算；
+
+2. 步骤2：加载矩阵S有$N^2$次访存，计算softmax有$2N^2$次计算，写回矩阵P有$N^2$次访存；
+
+3. 步骤3： 加载矩阵S与P有$N^2 + Nd$次访存，计算有$N^3d$次计算，结果写回有$Nd$次访存。
 
 
