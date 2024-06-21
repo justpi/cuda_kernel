@@ -14,7 +14,7 @@ __global__ void copyCol(float* A, float* B, int M, int N) {
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
     int idy = blockDim.y * blockIdx.y + threadIdx.y;
     if (idx < M && idy < N) {
-        B[idx * N + idx] = A[idy * N + idx];
+        B[idx * N + idx] = A[idx * N + idy];
     }
 }
 
@@ -56,10 +56,11 @@ void transpose_kernel_launcher(float* h_a, float* h_b, int M, int N) {
     CUDA_CHECK(cudaMemcpy(d_a, h_a, size * sizeof(float), cudaMemcpyHostToDevice));
 
     /* 核函数执行 */
-    // dim3 block(BLOCK_SIZE, BLOCK_SIZE);
-    // dim3 grid((M + BLOCK_SIZE - 1) / BLOCK_SIZE, (M + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    /* baseline */
+    dim3 block(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 grid((M + BLOCK_SIZE - 1) / BLOCK_SIZE, (M + BLOCK_SIZE - 1) / BLOCK_SIZE);
     
-    // transpose_baseline<<<grid, block>>>(d_a, d_b, M, N);
+    transpose_baseline<<<grid, block>>>(d_a, d_b, M, N);
     /*添加shared mem*/
     dim3 block_share(BLOCK_SIZE, BLOCK_SIZE);
     dim3 grid_share((M + BLOCK_SIZE - 1) / BLOCK_SIZE, (M + BLOCK_SIZE - 1) / BLOCK_SIZE);
