@@ -1,6 +1,6 @@
 #include <iostream>
-#include "add_host.h"
-#include "add_kernel.h"
+#include "elementwise_host.h"
+#include "elementwise_kernel.h"
 #include "timer.hpp"
 #include "utils.hpp"
 

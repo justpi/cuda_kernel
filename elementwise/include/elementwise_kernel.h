@@ -1,5 +1,6 @@
 #include "utils.hpp"
 #define BLOCK_SIZE 256
+#define WARP_SIZE 32
 
 __global__ void add(float* __restrict__ d_a, float* __restrict__ d_b, float* __restrict__ d_c, int N);
 
