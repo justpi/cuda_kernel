@@ -188,24 +188,57 @@ void dot_product_kernel_launcher(float* h_a, float* h_b, float* h_c, int N) {
 
 // histgram-baseline 
 // block(BLOCK_SIZE), grid(N/BLOCK_SIZE)
-// a: Nx1. b: counted gistgram
+// a: Nx1. o: counted gistgram
 
-__global__ void histgram(int* d_a, int* d_b, int N) {
+__global__ void histgram(int* d_a, int* d_o, int N) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < N) atomicAdd(d_b[d_a[dix]], 1);
+    if (idx < N) atomicAdd(d_o[d_a[dix]], 1);
 }
 
 // histgram-vec4
 // block(BLOCK_SIZE/4), grid(N/BLOCK_SIZE)
-// a: Nx1. b: counted gistgram
-__global__ void histgram_vec4(int* d_a, int* d_b, int N) {
+// a: Nx1. o: counted gistgram
+__global__ void histgram_vec4(int* d_a, int* d_o, int N) {
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
     if (idx < N) {
         int4 reg_val = FETECH_INT4(d_a[idx]);
-        atomicAdd(d_b[reg_val.x], 1);
-        atomicAdd(d_b[reg_val.y], 1);
-        atomicAdd(d_b[reg_val.z], 1);
-        atomicAdd(d_b[reg_val.w], 1);
+        atomicAdd(d_o[reg_val.x], 1);
+        atomicAdd(d_o[reg_val.y], 1);
+        atomicAdd(d_o[reg_val.z], 1);
+        atomicAdd(d_o[reg_val.w], 1);
+    }
+}
+
+
+__device__ __forceinline__ float _sigmoid(float x) {
+    return 1.0f / (1.0f + expf(-x));
+}
+
+// sigmoid-baseline
+// block(BLOCK_SIZE), grid(N/BLOCK_SIZE)
+// a:Nx1, o:Nx1
+__global__ void sigmoid(float* d_a, float* d_o, int N) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < N) {
+        float output = _sigmoid(d_a[idx]);
+        d_o[idx] = output;
+    }
+}
+
+
+// sigmoid-vec4
+// block(BLOCK_SIZE), grid(N/BLOCK_SIZE)
+// a:Nx1, o:Nx1
+__global__ void sigmoid_vec4(float* d_a, float* d_o, int N) {
+    int idx = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
+    if (idx < N) {
+        float4 reg_val = FETCH_FLOAT4(d_a[idx]);
+        float4 output;
+        output.x = _sigmoid(reg_val.x);
+        output.y = _sigmoid(reg_val.y);
+        output.z = _sigmoid(reg_val.z);
+        output.w = _sigmoid(reg_val.w);
+        FETCH_FLOAT4(d_o[idx]) = output;
     }
 }
 
