@@ -2,6 +2,7 @@
 #include <cuda_runtime.h>
 #include <iostream>
 
+#define FETCH_FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
 
 __global__ void reduce_kernel_baseline(float* d_in, float* d_out) {
     /*base版本的reduce算子
@@ -251,6 +252,85 @@ __global__ void reduce_kernel_unroll(float* d_in, float* d_out) {
 }
 
 
+////////////////////////// Shuffle ///////////////////////////////////
+template <const int WarpSize = 32>
+__device__ __forceinline__ float warp_reduce_sum(float val) {
+    /*warp reduce 实现，具体使用shfl指令进行实现，这种函数效率较手写更高*/
+    #pragma unroll
+    for(int mask=WarpSize >> 1; mask >=1; mask >>= 1) {
+        val += __shfl_xor_sync(0xffffffff, val, mask);
+    }
+    return val;
+}
+
+template <const int THREAD_PER_BLOCK = 128>
+__device__ __forceinline__ float block_reduce_sum(float val) {
+    /* block reduce，使用两个阶段的warp reduce完成一个完整的reduce操作 */
+    constexpr int NUM_WAPRS = THREAD_PER_BLOCK / WARP_SIZE;
+    int warp = threadIdx.x / WARP_SIZE;
+    int lane = threadIdx.x % WARP_SIZE;
+    static __shared__ float sdata[NUM_WAPRS];
+
+    val = warp_reduce_sum<WARP_SIZE>(val);
+    if (lane == 0) {
+        sdata[warp] = val;
+    }
+    __syncthreads();
+    val = (lane < NUM_WAPRS) ? sdata[lane] : 0.0f;      // 大于NUM_WARP的值设置为0
+    val = warp_reduce_sum<WARP_SIZE>(val);
+    return val;
+}
+
+template<const int THREAD_PER_BLOCK = 128>
+__global__ void block_all_reduce(float* d_in, float* d_out, int N) {
+    int tid = threadIdx.x;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    constexpr int NUM_WARPS = THREAD_PER_BLOCK / WARP_SIZE;
+    int warp = threadIdx.x / WARP_SIZE;
+    int lane = threadIdx.x % WARP_SIZE;
+    __shared__ float sdata[NUM_WARPS];
+
+    float sum = (idx < N) ? d_in[idx] : 0.0f;
+
+    sum = warp_reduce_sum<WARP_SIZE>(sum);
+    if (lane == 0) sdata[warp] = sum;
+    __syncthreads();
+    sum = (lane < NUM_WARPS) ? sdata[lane] : 0.0f;
+    if (warp == 0) sum = warp_reduce_sum<WARP_SIZE>(sum);
+    // 这里写的和标准的有点区别，是为了和其他核函数做比较，一般reduce sum最后应该求出一个值
+    // 所以此处应该是每个block求出的结果加到d_out变量中，是为下面注释掉的代码。
+    if (tid == 0) d_out[blockIdx.x] = sum;
+    // if (tid == 0) atomicAdd(d_out, sum);
+}
+
+
+template <const int THREAD_PER_BLOCK  = 128>
+__global__ void block_all_reduce_vec4(float*d_in, float* d_out, int N) {
+    int tid = threadIdx.x;
+    int idx = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
+    constexpr int NUM_WARPS = THREAD_PER_BLOCK / WARP_SIZE;
+    int warp = threadIdx.x / WARP_SIZE;
+    int lane = threadIdx.x % WARP_SIZE;
+    __shared__ float sdata[NUM_WARPS];
+    float sum;
+    if (idx < N) {
+        float4 val = FETCH_FLOAT4(d_in[idx]);
+        sum = val.x + val.y + val.z + val.w;
+    }
+    else {
+        sum = 0.0f;
+    }
+
+    sum = warp_reduce_sum<WARP_SIZE>(sum);
+    if (lane == 0) sdata[warp] = sum;
+    __syncthreads();
+    sum = (lane < NUM_WARPS) ? sdata[lane] : 0.0f;
+    if (warp == 0) sum = warp_reduce_sum<WARP_SIZE>(sum);
+    if (tid == 0) d_out[blockIdx.x] = sum;
+    
+}
+
+
 void reduce_kernel_launcher(float* h_in, float* h_out, int N) {
     /* reduce算子的执行函数 */
     int M = (N + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
@@ -274,28 +354,36 @@ void reduce_kernel_launcher(float* h_in, float* h_out, int N) {
     dim3 blocks_idle(THREADS_PER_BLOCK / 2);
     dim3 grids_idle(M);
 
+    /* 7使用的线程组织形式 */
+    dim3 blocks_vec4(THREADS_PER_BLOCK / 4);
+    dim3 grids_vec4(M);
+
     /* 执行核函数 */
 
     /* baseline*/
-    // reduce_kernel_baseline<<<grids, blocks>>>(d_in, d_out);
+    reduce_kernel_baseline<<<grids, blocks>>>(d_in, d_out);
 
     /* 优化1：改善线程的divergence */
-    // reduce_kernel_div<<<grids, blocks>>>(d_in, d_out);
+    reduce_kernel_div<<<grids, blocks>>>(d_in, d_out);
     
     /* 优化2： 在上面的基础上改善了bank conflict */
-    // reduce_kernel_bankconflic<<<grids, blocks>>>(d_in, d_out);
+    reduce_kernel_bankconflic<<<grids, blocks>>>(d_in, d_out);
     
     /* 优化3：在上面的基础上改善了进程使用率（idle） */
     reduce_kernel_idle<<<grids_idle, blocks_idle>>>(d_in, d_out);
     
     /* 优化4：在优化3的基础上unroll了最后的几个循环计算 */
-    // reduce_kernel_unrollLast32<<<grids_idle, blocks_idle>>>(d_in, d_out);
+    reduce_kernel_unrollLast32<<<grids_idle, blocks_idle>>>(d_in, d_out);
     
     /* 优化5：在优化4的基础上直接循环展开 */
-    // reduce_kernel_unroll<<<grids_idle, blocks_idle>>>(d_in, d_out);
+    reduce_kernel_unroll<<<grids_idle, blocks_idle>>>(d_in, d_out);
     
-    /* 优化6：TODO:在使用shuffle指令 */
+    /* 优化6：使用shuffle指令 */
+    block_all_reduce<THREADS_PER_BLOCK><<<grids, blocks>>>(d_in, d_out, N);
 
+    /* 优化7：向量化访存 */
+
+    block_all_reduce_vec4<THREADS_PER_BLOCK/4><<<grids_vec4, blocks_vec4>>>(d_in, d_out, N);
 
     /* 数据拷回host */
     CUDA_CHECK(cudaMemcpy(h_out, d_out, M * sizeof(float), cudaMemcpyDeviceToHost));

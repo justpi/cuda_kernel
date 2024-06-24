@@ -3,6 +3,8 @@
 
 #define THREADS_PER_BLOCK 1024
 
+#define WARP_SIZE 32
+
 __global__ void reduce_kernel_baseline(float* d_in, float* d_out);
 
 __global__ void reduce_kernel_div(float* d_in, float* d_out);
