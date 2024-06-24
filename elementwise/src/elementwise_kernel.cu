@@ -8,6 +8,8 @@
 /* 向量化访存：取4个float */
 #define FETCH_FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
 
+#define FETECH_INT4(pointer) (reinterpret_cast<int4*>(&(pointer))[0])
+
 __global__ void add(float* __restrict__ d_a, float* __restrict__ d_b, float* __restrict__ d_c, int N) {
     /* 矩阵加法实现 */
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
@@ -182,3 +184,29 @@ void dot_product_kernel_launcher(float* h_a, float* h_b, float* h_c, int N) {
     CUDA_CHECK(cudaFree(d_b));
     CUDA_CHECK(cudaFree(d_a));
 }
+
+
+// histgram-baseline 
+// block(BLOCK_SIZE), grid(N/BLOCK_SIZE)
+// a: Nx1. b: counted gistgram
+
+__global__ void histgram(int* d_a, int* d_b, int N) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < N) atomicAdd(d_b[d_a[dix]], 1);
+}
+
+// histgram-vec4
+// block(BLOCK_SIZE/4), grid(N/BLOCK_SIZE)
+// a: Nx1. b: counted gistgram
+__global__ void histgram_vec4(int* d_a, int* d_b, int N) {
+    int idx = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
+    if (idx < N) {
+        int4 reg_val = FETECH_INT4(d_a[idx]);
+        atomicAdd(d_b[reg_val.x], 1);
+        atomicAdd(d_b[reg_val.y], 1);
+        atomicAdd(d_b[reg_val.z], 1);
+        atomicAdd(d_b[reg_val.w], 1);
+    }
+}
+
+
