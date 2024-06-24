@@ -242,4 +242,30 @@ __global__ void sigmoid_vec4(float* d_a, float* d_o, int N) {
     }
 }
 
+__device__ float _relu(float x) {
+    return  fmaxf(x, 0.0f);
+}
 
+// relu-baseline
+// block(BLOCK_SIZE), grid(N / BLOCK_SIZE)
+// a: Nx1, o:Nx1
+__global__ void relu(float* d_a, float* d_o, int N){
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < N) d_o[idx] = _relu(x);
+}
+
+// relu-vec4
+// block(BLOCK_SIZE/4), grid(N / BLOCK_SIZE)
+// a: Nx1, o:Nx1
+__global__ void relu_vec4(float* d_a, float* d_o, int N) {
+    int idx = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
+    if (idx < N) {
+        float4 reg_val = FETCH_FLOAT4(d_a[idx]);
+        float4 output;
+        output.x = _relu(reg_val.x);
+        output.y = _relu(reg_val.y);
+        output.z = _relu(reg_val.z);
+        output.w = _relu(reg_val.w);
+        FETCH_FLOAT4(d_o[idx]) = output;
+    }
+}
