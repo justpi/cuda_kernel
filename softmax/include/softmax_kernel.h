@@ -1,6 +1,7 @@
 #include "utils.hpp"
 
 #define BLOCK_SIZE 1024
+#define WARP_SIZE 32
 
 __global__ void softmax_online_base(float *d_a, float *d_o, int length, int stride);
 

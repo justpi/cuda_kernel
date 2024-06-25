@@ -108,6 +108,80 @@ __global__ void softmax_online_vec_share(float *d_a, float *d_o, int length, int
     d_o[idx+3] = sums[3];
 }
 
+// 用于求最值
+template<const int WarpSize=32>
+__device__ __forceinline__ float warp_reduce_max(float val) {
+    #pragma unroll
+    for (int mask=WarpSize>>1; mask >=1; mask>=1) {
+        val = fmaxf(val, __shfl_xor_sync(0xffffffff, val, mask));
+    }
+    return val;
+}
+// 用于求和
+template<const int WarpSize=32>
+__device__ __forceinline__ float warp_reduce_sum(float val) {
+    #pragma unroll
+    for(int mask=WarpSize>>1; mask>=1; mask>>=1) {
+        val += __shfl_xor_sync(0xffffffff, val, mask);
+    }
+    return val;
+}
+
+// block_reduce_sum
+template<const int NUM_THREAD=BLOCK_SIZE>
+__device__ __forceinline__ float block_reduce_sum(int val) {
+    constexpr int NUM_WARPS = NUM_THREAD / WARP_SIZE;
+    int warp = threadIdx.x / WARP_SIZE;
+    int lane = threadIdx.x % WARP_SIZE;
+    __shared__ float sdata[NUM_WARPS];
+    
+    val = warp_reduce_sum<WARP_SIZE>(val);
+    if (lane == 0) sdata[warp] = val;
+    __syncthreads;
+
+    val = (lane < NUM_WARPS) ? sdata[lane]:0.0f;
+    val = warp_reduce_sum<WARP_SIZE>(val);
+    return  val;
+}
+
+// 1-dim softmax-baseline
+// block(BLOCK_SIZE), grid(N/BLOCK_SIZE)
+// a:N, o: N
+template<const int NUM_THREAD=BLOCK_SIZE>
+__global__ void softmax_1d(float* d_a, float* d_o, float* total, int N) {
+    const int tid = threadIdx.x;
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    constexpr int NUM_WARPS = NUM_THREAD / WARP_SIZE;
+    int warp = tid /  WARP_SIZE;
+    int lane = tid % WARP_SIZE;
+    __shared__ float  sdata[NUM_WARPS];
+
+    float exp_value = (idx < N) ? expf(d_a[idx]): 0.0f;
+    float sum = warp_reduce_sum<WARP_SIZE>(exp_value);
+    if (lane == 0) sdata[warp] = sum;
+    __syncthreads();
+    sum = (lane < NUM_WARPS) ? sdata[lane]:0.0f;
+    sum = warp_reduce_sum<WARP_SIZE>(sum);
+    if (tid == 0) atomicAdd(total, sum);
+    __threadfence();
+    if (idx < N) d_o[idx] = exp_value / (*total);
+}
+
+// 1-dim softmax-block reduce
+// block(BLOCK_SIZE), grid(N/BLOCK_SIZE)
+// a:N, o:N
+template<const int NUM_THREAD=BLOCK_SIZE>
+__global__ void softmax_1d_block(float* d_a, float* d_o, float* total, int N) {
+    const int tid = threadIdx.x;
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    float exp_val = (idx < N) ? expf(d_a[idx]):0.0f;
+    float sum = block_reduce_sum<BLOCK_SIZE>(exp_val);
+    if (tid == 0) atomicAdd(total, sum);
+    __threadfence();
+    if (idx < N) d_o[idx] = exp_val / (*total);
+}
+
 void softmax_kernel_launcher(float* a, float* h_o, int length, int stride) {
     /* 分配GPU资源 */
     float *d_a;
@@ -119,12 +193,12 @@ void softmax_kernel_launcher(float* a, float* h_o, int length, int stride) {
 
     /* 组织线程并launch kernel */
 
-    /* base */
+    /* online-baseline */
     const int rows = (length + stride - 1) / stride;
-    // dim3 block(BLOCK_SIZE);
-    // dim3 grid(rows);
-    // softmax_online_base<<<grid, block>>>(d_a, d_o, length, stride);
-    /* 向量化访存 */
+    dim3 block(BLOCK_SIZE);
+    dim3 grid(rows);
+    softmax_online_base<<<grid, block>>>(d_a, d_o, length, stride);
+    /* online-向量化访存 */
     if (stride >= BLOCK_SIZE) {
         dim3 block_vec(BLOCK_SIZE/4);
         dim3 grid_vec(rows);
@@ -137,8 +211,19 @@ void softmax_kernel_launcher(float* a, float* h_o, int length, int stride) {
     }
     
 
-    /* 共享内存，TODO: 实现尚有问题 */
-    // softmax_online_vec_share<<<grid_vec, block_vec>>>(d_a, d_o, length, stride);
+    /* online-共享内存，TODO: 实现尚有问题 */
+    if (stride >= BLOCK_SIZE) {
+        dim3 block_vec(BLOCK_SIZE/4);
+        dim3 grid_vec(rows);
+        softmax_online_vec_share<<<grid_vec, block_vec>>>(d_a, d_o, length, stride);
+    }
+    else {
+        dim3 block_vec(stride/4);
+        dim3 grid_vec(rows);
+        softmax_online_vec_share<<<grid_vec, block_vec>>>(d_a, d_o, length, stride);
+    }
+
+    /* 一维softmax实现 */
 
     /* 拷贝数据 */
     CUDA_CHECK(cudaMemcpy(h_o, d_o, length * sizeof(float), cudaMemcpyDeviceToHost));
