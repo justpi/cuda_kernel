@@ -425,18 +425,56 @@ void half_to_float_host(half *host_float, float *host_half, int num_elements) {
 }
 
 void cutlass_gemm(float* d_a, float* d_b, float* d_c, int M, int N, int K) {
+
     using RowMajor = cutlass::layout::RowMajor;
+
+    // using MMAOp = cutlass::arch::OpClassSimt;
+
+    // using SmArch = cutlass::arch::Sm86;
+
+    // using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<128, 128, 64>;
+
+    // using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 64>;
+
+    // using ShapeMMAOp = cutlass::gemm::GemmShape<1, 1, 4>;
+
+    // using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
+    //     float,
+    //     32 / cutlass::sizeof_bits<float>::value,
+    //     float,
+    //     float>;
+    
+    // using SwizzleThreadBlock = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>;
+
+    // constexpr int NumStages = 2;
+
+    // constexpr int AlignA = 1;
+
+    // constexpr int AlignB = 1;
+
+    // using OperatorClass = cutlass::arch::OpClassWmmaTensorOp;
 
     using CutlassGemm = cutlass::gemm::device::Gemm<float,
                                                     RowMajor,
                                                     float,
                                                     RowMajor,
                                                     float,
-                                                    RowMajor>;
+                                                    RowMajor
+                                                    // float,
+                                                    // MMAOp,
+                                                    // SmArch,
+                                                    // ShapeMMAThreadBlock,
+                                                    // ShapeMMAWarp,
+                                                    // ShapeMMAOp,
+                                                    // EpilogueOp,
+                                                    // SwizzleThreadBlock,
+                                                    // NumStages
+                                                    >;
     
     CutlassGemm gemm_op;
 
-    float alpha = 1.0, beta = 0.0;
+    float alpha = 1.0;
+    float beta = 0.0;
 
     CutlassGemm::Arguments args(
         {M, N, K},
