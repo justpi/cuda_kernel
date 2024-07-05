@@ -182,6 +182,9 @@ __global__ void softmax_1d_block(float* d_a, float* d_o, float* total, int N) {
     if (idx < N) d_o[idx] = exp_val / (*total);
 }
 
+
+
+
 void softmax_kernel_launcher(float* a, float* h_o, int length, int stride) {
     /* 分配GPU资源 */
     float *d_a;

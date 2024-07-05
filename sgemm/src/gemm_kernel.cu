@@ -5,6 +5,8 @@
 #include <cuda_fp16.h>
 #include <mma.h>
 
+#include <cutlass/gemm/device/gemm.h>
+
 using namespace nvcuda;
 
 /* float4读取数据的宏 */
@@ -422,6 +424,33 @@ void half_to_float_host(half *host_float, float *host_half, int num_elements) {
     }
 }
 
+void cutlass_gemm(float* d_a, float* d_b, float* d_c, int M, int N, int K) {
+    using RowMajor = cutlass::layout::RowMajor;
+
+    using CutlassGemm = cutlass::gemm::device::Gemm<float,
+                                                    RowMajor,
+                                                    float,
+                                                    RowMajor,
+                                                    float,
+                                                    RowMajor>;
+    
+    CutlassGemm gemm_op;
+
+    float alpha = 1.0, beta = 0.0;
+
+    CutlassGemm::Arguments args(
+        {M, N, K},
+        {d_a, K},
+        {d_b, N},
+        {d_c, N},
+        {d_c, N},
+        {alpha, beta});
+    
+    gemm_op(args);
+
+
+}
+
 void gemm_kernel_launcher(float* a, float* b, float* c, int N, int K, int M) {
     /* 分配GPU资源 */
     int sizeA = M*K;
@@ -440,38 +469,41 @@ void gemm_kernel_launcher(float* a, float* b, float* c, int N, int K, int M) {
 
 
     /* baseline：naive版本的gemm，每个线程处理一个output元素 */
-    // dim3 block(BLOCK_SIZE, BLOCK_SIZE);
-    // dim3 grid((M + BLOCK_SIZE - 1)/ BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE);
-    // gemm_baseline<<<grid, block>>>(d_a, d_b, d_c, N, K, M);
+    dim3 block(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 grid((M + BLOCK_SIZE - 1)/ BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    gemm_baseline<<<grid, block>>>(d_a, d_b, d_c, N, K, M);
 
     /* cublas实现 */
     cublas_gemm(d_a, d_b, d_c, N, K, M);
 
+    /*cutlass实现*/
+    cutlass_gemm(d_a, d_b, d_c, M, N, K);
+
     /*优化一：对K使用tile*/
-    // dim3 block_1(BLOCK_SIZE, BLOCK_SIZE);
-    // dim3 grid_1((M + BLOCK_SIZE - 1)/ BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE, (K + TILE - 1) / TILE);
-    // sgemm_tile<TILE><<<grid_1, block_1>>>(d_a, d_b, d_c, M, N, K);
+    dim3 block_1(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 grid_1((M + BLOCK_SIZE - 1)/ BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE, (K + TILE - 1) / TILE);
+    sgemm_tile<TILE><<<grid_1, block_1>>>(d_a, d_b, d_c, M, N, K);
 
-    // /* 优化二：tileK + shared mem */
-    // dim3 block_2(BLOCK_SIZE, BLOCK_SIZE);
-    // dim3 grid_2((M + BLOCK_SIZE - 1)/ BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE, (K + TILE - 1) / TILE);
-    // sgemm_tile_share<<<grid_2, block_2>>>(d_a, d_b, d_c, M, N, K);
+    /* 优化二：tileK + shared mem */
+    dim3 block_2(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 grid_2((M + BLOCK_SIZE - 1)/ BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE, (K + TILE - 1) / TILE);
+    sgemm_tile_share<<<grid_2, block_2>>>(d_a, d_b, d_c, M, N, K);
     /* 优化二：使用共享内存+tile */
-    // gemm_share<<<grid, block>>>(d_a, d_b, d_c, N, K, M);
+    gemm_share<<<grid, block>>>(d_a, d_b, d_c, N, K, M);
 
-    // /* 优化三：使用tile+prefetch策略 */
-    // const int BLOCK_SIZE_M = 128;     // 每个线程块计算的矩阵C的连续行的数量
-    // const int BLOCK_SIZE_K = 8;     // 每个线程块加载到共享内存中的矩阵A的连续列的数量
-    // const int BLOCK_SIZE_N = 128;     // 每个线程块计算的矩阵C的连续列的数量
-    // const int THREAD_SIZE_Y = 8;    // 每个线程计算矩阵C的block的行数
-    // const int THREAD_SIZE_X = 8;    // 每个线程计算矩阵C的block的列数
-    // const bool ENABLE_DOUBLE_BUFFER = false;
+    /* 优化三：使用tile+prefetch策略 */
+    const int BLOCK_SIZE_M = 128;     // 每个线程块计算的矩阵C的连续行的数量
+    const int BLOCK_SIZE_K = 8;     // 每个线程块加载到共享内存中的矩阵A的连续列的数量
+    const int BLOCK_SIZE_N = 128;     // 每个线程块计算的矩阵C的连续列的数量
+    const int THREAD_SIZE_Y = 8;    // 每个线程计算矩阵C的block的行数
+    const int THREAD_SIZE_X = 8;    // 每个线程计算矩阵C的block的列数
+    const bool ENABLE_DOUBLE_BUFFER = false;
 
-    // dim3 block_size(BLOCK_SIZE_N / THREAD_SIZE_X, BLOCK_SIZE_M / THREAD_SIZE_Y);
-    // dim3 grid_size(N / BLOCK_SIZE_N, M / BLOCK_SIZE_M);
+    dim3 block_size(BLOCK_SIZE_N / THREAD_SIZE_X, BLOCK_SIZE_M / THREAD_SIZE_Y);
+    dim3 grid_size(N / BLOCK_SIZE_N, M / BLOCK_SIZE_M);
     
-    // gemm_prefetch<BLOCK_SIZE_M, BLOCK_SIZE_K, BLOCK_SIZE_N, THREAD_SIZE_Y, THREAD_SIZE_X, ENABLE_DOUBLE_BUFFER>
-    // <<<grid_size, block_size>>>(d_a, d_b, d_c, M, K, N);
+    gemm_prefetch<BLOCK_SIZE_M, BLOCK_SIZE_K, BLOCK_SIZE_N, THREAD_SIZE_Y, THREAD_SIZE_X, ENABLE_DOUBLE_BUFFER>
+    <<<grid_size, block_size>>>(d_a, d_b, d_c, M, K, N);
 
 
     /*tensor core实现*/
@@ -505,7 +537,7 @@ void gemm_kernel_launcher(float* a, float* b, float* c, int N, int K, int M) {
     half_to_float_host(c_half, c, sizeC);
 
     /* 结果拷回host内存 */
-    // CUDA_CHECK(cudaMemcpy(c, d_c, sizeC * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(c, d_c, sizeC * sizeof(float), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaDeviceSynchronize());
     LAST_KERNEL_CHECK();
 
