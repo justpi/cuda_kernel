@@ -5,6 +5,8 @@
 #include <cuda_fp16.h>
 #include <mma.h>
 
+#include <cutlass/gemm/device/gemm.h>
+
 using namespace nvcuda;
 
 /* half4读取数据的宏 */
@@ -410,7 +412,7 @@ __global__ void hgemm_shared(half *d_a, half *d_b, half *d_c, int M, int K, int 
     __shared__ half sdata_b[BK][BN];
 
     int load_a_smem_m = idx_col + warp_id * WMMA_M;
-    int load_a_smem_k = 
+    // int load_a_smem_k = 
 
     if (idx_row < M && idx_col < N) {
         /*声明fragment*/
@@ -471,6 +473,90 @@ void hgemm_cublas_launcher(half* a, half* b, half* c, int M, int K, int N) {
     CUDA_CHECK(cudaFree(d_b));
     CUDA_CHECK(cudaFree(d_a));
 
+}
+
+void hgemm_cutlass(cutlass::half_t* d_a, cutlass::half_t* d_b, cutlass::half_t* d_c, int M, int N, int K) {
+    using ElementInputA = cutlass::half_t;
+    using ElementInputB = cutlass::half_t;
+    using ElementOutput = cutlass::half_t;
+    using ElementAccumulator = float; // 使用float作为累加器类型
+    using LayoutInput = cutlass::layout::RowMajor;
+
+    using MMAOp = cutlass::arch::OpClassTensorOp;
+    using SmArch = cutlass::arch::Sm80; // 根据你的GPU调整
+
+    using ShapeMMAThreadBlock = cutlass::gemm::GemmShape<128, 128, 32>;
+    using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;
+    using ShapeMMAOp = cutlass::gemm::GemmShape<16, 8, 16>;
+
+    using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
+        ElementOutput, 128 / cutlass::sizeof_bits<ElementOutput>::value,
+        ElementAccumulator, ElementAccumulator>;
+
+    using Gemm = cutlass::gemm::device::Gemm<
+        ElementInputA, LayoutInput,
+        ElementInputB, LayoutInput,
+        ElementOutput, LayoutInput,
+        ElementAccumulator,
+        MMAOp,
+        SmArch,
+        ShapeMMAThreadBlock,
+        ShapeMMAWarp,
+        ShapeMMAOp,
+        EpilogueOp,
+        cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
+        3
+    >;
+
+    ElementAccumulator alpha = ElementAccumulator(1);
+    ElementAccumulator beta = ElementAccumulator(0);
+
+    typename Gemm::Arguments args(
+        {M, N, K},
+        {d_a, K},
+        {d_b, N},
+        {d_c, N},
+        {d_c, N},
+        {alpha, beta}
+    );
+
+    Gemm gemm_op;
+    cutlass::Status status = gemm_op(args);
+
+    if (status != cutlass::Status::kSuccess) {
+        printf("GEMM failed with error: %s\n", cutlassGetStatusString(status));
+    }
+}
+
+
+void hgemm_cutlass_launcher(half* a, half* b, half* c, int M, int N, int K) {
+    /* 分配GPU资源 */
+    int sizeA = M*K;
+    int sizeB = K*N;
+    int sizeC = M*N;
+    half* d_a;
+    half* d_b;
+    half* d_c;
+    CUDA_CHECK(cudaMalloc(&d_a, sizeA * sizeof(half)));
+    CUDA_CHECK(cudaMalloc(&d_b, sizeB * sizeof(half)));
+    CUDA_CHECK(cudaMalloc(&d_c, sizeC * sizeof(half)));
+
+    /* 拷贝数据到global mem */
+    CUDA_CHECK(cudaMemcpy(d_a, a, sizeA * sizeof(half), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_b, b, sizeB * sizeof(half), cudaMemcpyHostToDevice));
+
+    /* cublas实现 */
+    hgemm_cutlass(reinterpret_cast<cutlass::half_t*>(d_a), reinterpret_cast<cutlass::half_t*>(d_b), reinterpret_cast<cutlass::half_t*>(d_c), M, N, K);
+
+    /* 结果拷回host内存 */
+    CUDA_CHECK(cudaMemcpy(c, d_c, sizeC * sizeof(half), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaDeviceSynchronize());
+    LAST_KERNEL_CHECK();
+
+    /* 释放显存 */
+    CUDA_CHECK(cudaFree(d_c));
+    CUDA_CHECK(cudaFree(d_b));
+    CUDA_CHECK(cudaFree(d_a));
 }
 
 void hgemm_kernel_launcher(half* a, half* b, half* c, int M, int K, int N) {

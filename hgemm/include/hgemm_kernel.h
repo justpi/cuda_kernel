@@ -20,4 +20,6 @@
 
 void hgemm_cublas_launcher(half* a, half* b, half* c, int M, int K, int N);
 
+void hgemm_cutlass_launcher(half* a, half* b, half* c, int M, int K, int N);
+
 void hgemm_kernel_launcher(half* a, half* b, half* c, int M, int K, int N);

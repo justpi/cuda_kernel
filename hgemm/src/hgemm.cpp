@@ -37,6 +37,11 @@ int main(int argc, char **argv) {
     timer.duration<Timer::ms>("gemm in cublas(warmup)");
 
     timer.start();
+    hgemm_cutlass_launcher(a, b, h_c, width, width, width);
+    timer.stop();
+    timer.duration<Timer::ms>("gemm in cutlass(warmup)");
+
+    timer.start();
     hgemm_kernel_launcher(a, b, d_c, width, width, width);
     timer.stop();
     timer.duration<Timer::ms>("gemm in kernel(warmup)");
@@ -47,6 +52,11 @@ int main(int argc, char **argv) {
     hgemm_cublas_launcher(a, b, h_c, width, width, width);
     timer.stop();
     timer.duration<Timer::ms>("gemm in cublas");
+
+    timer.start();
+    hgemm_cutlass_launcher(a, b, h_c, width, width, width);
+    timer.stop();
+    timer.duration<Timer::ms>("gemm in cutlass");
 
     timer.start();
     hgemm_kernel_launcher(a, b, d_c, width, width, width);

@@ -4,6 +4,8 @@ project(hgemm LANGUAGES CXX CUDA)
 
 find_package(CUDA REQUIRED)
 
+set(CMAKE_CXX_STANDARD 17)
+
 set(CMAKE_CUDA_ARCHITECTURES 86)
 
 # Include directories for header files
