@@ -3,6 +3,13 @@
 #include <cudnn.h>
 #include <cublas_v2.h>
 
+#include "cutlass/conv/device/implicit_gemm_convolution.h"
+#include "cutlass/conv/kernel/default_conv2d_fprop.h"
+#include "cutlass/gemm/device/gemm.h"
+#include "cutlass/cutlass.h"
+#include "cutlass/util/host_tensor.h"
+#include "cutlass/util/reference/host/tensor_fill.h"
+
 #define div_ceil(a, b) ((a + b - 1) / b)
 
 #define FETCH_FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
@@ -254,7 +261,7 @@ __global__ void conv_implicit_gemm_vec4(float* input, float* output, float* weig
 
     /*使用寄存器存放向量化访存的值*/
     float frag_w[4];
-    float frag_i[4];
+    // float frag_i[4];
     const int k_tile = div_ceil(weight_im2col_K, TILE);
     int in_ch, kh, kw, in_h, in_w;
     float output_value = 0.0f;
@@ -305,6 +312,134 @@ __global__ void conv_implicit_gemm_vec4(float* input, float* output, float* weig
 
 }
 
+__global__ void convert_float_to_cutlass_half(float* input, cutlass::half_t* output, int size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        cutlass::NumericConverter<cutlass::half_t, float> converter;
+        output[idx] = converter(input[idx]);
+    }
+}
+
+void cutlass_conv(float* input_d, float* output_d, float* weight_d, 
+                    int batch, int in_channel, int out_channel, int height, int width, 
+                    int height_out, int width_out, 
+                    int kheight, int kwidth, 
+                    int pad_height, int pad_width, 
+                    int stride_height, int stride_width) {
+
+    using ElementInput = cutlass::half_t;
+    using ElementOutput = float;
+    using ElementWeight = cutlass::half_t;
+
+    using ElementAccumulator = float;
+
+    using LayoutInput = cutlass::layout::TensorNCHW;
+    using LayoutOutput = cutlass::layout::TensorNCHW;
+    using LayoutWeight = cutlass::layout::TensorNCHW;
+
+    using MMAOp = cutlass::arch::OpClassTensorOp;
+
+    using SmArch = cutlass::arch::Sm80;
+
+    using ThreadblockShape = cutlass::gemm::GemmShape<128, 128, 32>;
+    using WarpShape = cutlass::gemm::GemmShape<64, 64, 32>;
+    using InstructionShape = cutlass::gemm::GemmShape<16, 8, 16>;
+
+    using SwizzleThreadBlock = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>;
+
+    constexpr int NumStages = 3;
+
+    static cutlass::conv::IteratorAlgorithm const IteratorAlgorithm = cutlass::conv::IteratorAlgorithm::kAnalytic;
+
+    static cutlass::conv::StrideSupport const OutputStride = cutlass::conv::StrideSupport::kUnity;
+
+    using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
+                        ElementOutput,
+                        32 / cutlass::sizeof_bits<ElementOutput>::value,
+                        ElementAccumulator,
+                        float>;
+    
+    using Conv2dFpropKernel = typename cutlass::conv::kernel::DefaultConv2dFprop<
+                        ElementInput, LayoutInput,
+                        ElementWeight, LayoutWeight,
+                        ElementOutput,  LayoutOutput,
+                        ElementAccumulator,
+                        MMAOp,
+                        SmArch,
+                        ThreadblockShape,
+                        WarpShape,
+                        InstructionShape,
+                        EpilogueOp,
+                        SwizzleThreadBlock,
+                        NumStages,
+                        cutlass::arch::OpMultiplyAdd,
+                        IteratorAlgorithm,
+                        OutputStride
+    >::Kernel;
+
+    using ImplicitGemm = cutlass::conv::device::ImplicitGemmConvolution<Conv2dFpropKernel>;
+    
+    float alpha = 1.0, beta = 0.0;
+    
+    /*float2half_t*/
+    
+    int weight_size = out_channel*in_channel*kheight*kwidth;
+    int input_size = batch*in_channel*height*width;
+    /*不能保证内存对齐*/
+    // cutlass::half_t *input_half, *weight_half;
+    // int input_size = batch*in_channel*height*width;
+    // CUDA_CHECK(cudaMalloc(&input_half, input_size * sizeof(cutlass::half_t)));
+    // CUDA_CHECK(cudaMalloc(&weight_half, weight_size * sizeof(cutlass::half_t)));
+
+    // dim3 block(BLOCK_SIZE);
+    // dim3 grid_input(input_size / BLOCK_SIZE);
+    // dim3 grid_weight(weight_size / BLOCK_SIZE);
+    // convert_float_to_cutlass_half<<<grid_input, block>>>(input_d, input_half, input_size);
+    // convert_float_to_cutlass_half<<<grid_weight, block>>>(weight_d, weight_half, weight_size);
+
+    // 使用对齐的内存分配
+    // 使用 CUTLASS 的内存分配工具
+    cutlass::HostTensor<ElementInput, LayoutInput> input_half({batch, in_channel, height, width});
+    cutlass::HostTensor<ElementWeight, LayoutWeight> weight_half({out_channel, in_channel, kheight, kwidth});
+
+    dim3 block(BLOCK_SIZE);
+    dim3 grid_input((input_size + block.x - 1) / block.x);
+    dim3 grid_weight((weight_size + block.x - 1) / block.x);
+    
+    convert_float_to_cutlass_half<<<grid_input, block>>>(input_d, input_half.device_data(), input_size);
+    convert_float_to_cutlass_half<<<grid_weight, block>>>(weight_d, weight_half.device_data(), weight_size);
+    
+    // 确保转换完成
+    cudaDeviceSynchronize();
+        
+    cutlass::conv::Mode mode = cutlass::conv::Mode::kCrossCorrelation;
+
+    cutlass::conv::Conv2dProblemSize problem_size(
+        {batch, in_channel, height, width},    // input size (NCHW)
+        {out_channel, in_channel, kheight, kwidth}, // filter size (KCRS)
+        {pad_height, pad_height, pad_width, pad_width}, // padding (pad_h, pad_h, pad_w, pad_w)
+        {stride_height, stride_width},          // strides (stride_h, stride_w)
+        {1, 1},                                // dilation (dilation_h, dilation_w)
+        {batch, out_channel, height_out, width_out},   // output size (NCHW)
+        mode,
+        1   // split k factor
+    );
+
+    typename ImplicitGemm::Arguments arguments{
+        problem_size,
+        {input_half.device_ref(), LayoutInput::packed({batch, in_channel, height, width})},
+        {weight_half.device_ref(), LayoutWeight::packed({out_channel, in_channel, kheight, kwidth})},
+        {output_d, LayoutOutput::packed({batch, out_channel, height_out, width_out})},
+        {output_d, LayoutOutput::packed({batch, out_channel, height_out, width_out})},
+        {alpha, beta}
+    };
+
+    ImplicitGemm conv_op;
+    
+    conv_op(arguments);
+
+}
+
 
 void conv_kernel_launcher(float* input, float* output, float* weight, 
     int batch, int in_channel, int out_channel, int height, int width, 
@@ -329,15 +464,16 @@ void conv_kernel_launcher(float* input, float* output, float* weight,
 
     dim3 block_base(TILE, TILE);
     dim3 grid_base(div_ceil(height_out * width_out, TILE), div_ceil(out_channel, TILE), batch);
-    // conv_implicit_gemm_base<<<grid_base, block_base>>>(input_d, output_d, weight_d, batch, in_channel, out_channel, height, width, height_out, width_out, kheight, kwidth, pad_height, pad_width, stride_height, stride_width);
+    conv_implicit_gemm_base<<<grid_base, block_base>>>(input_d, output_d, weight_d, batch, in_channel, out_channel, height, width, height_out, width_out, kheight, kwidth, pad_height, pad_width, stride_height, stride_width);
 
     /*展开循环*/
-    // conv_implicit_gemm_unroll<<<grid_base, block_base>>>(input_d, output_d, weight_d, batch, in_channel, out_channel, height, width, height_out, width_out, kheight, kwidth, pad_height, pad_width, stride_height, stride_width);
+    conv_implicit_gemm_unroll<<<grid_base, block_base>>>(input_d, output_d, weight_d, batch, in_channel, out_channel, height, width, height_out, width_out, kheight, kwidth, pad_height, pad_width, stride_height, stride_width);
 
     /*向量化访存*/
     conv_implicit_gemm_vec4<<<grid_base, block_base>>>(input_d, output_d, weight_d, batch, in_channel, out_channel, height, width, height_out, width_out, kheight, kwidth, pad_height, pad_width, stride_height, stride_width);
 
-
+    /*cutlass 实现*/
+    cutlass_conv(input_d, output_d, weight_d, batch, in_channel, out_channel, height, width, height_out, width_out, kheight, kwidth, pad_height, pad_width, stride_height, stride_width);
     CUDA_CHECK(cudaMemcpy(output, output_d, size_output * sizeof(float), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaDeviceSynchronize());
 

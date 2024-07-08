@@ -5,6 +5,7 @@ project(conv LANGUAGES CXX CUDA)
 find_package(CUDA REQUIRED)
 
 set(CMAKE_CUDA_ARCHITECTURES 86)
+set(CMAKE_CXX_STANDARD 17)
 
 find_library(CUDNN_LIBRARY
              NAMES cudnn

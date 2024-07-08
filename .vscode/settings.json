@@ -28,6 +28,7 @@
         "tuple": "cpp",
         "variant": "cpp",
         "cmath": "cpp",
-        "random": "cpp"
+        "random": "cpp",
+        "limits": "cpp"
     }
 }

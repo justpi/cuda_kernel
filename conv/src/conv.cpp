@@ -18,8 +18,8 @@ int main(int argc, char **argv) {
     int kwidth = 3;
     int padding_h = 1;
     int padding_w = 1;
-    int stride_h = 2;
-    int stride_w = 2;
+    int stride_h = 1;
+    int stride_w = 1;
     int dilation_h = 1;
     int dilation_w = 1;
 
