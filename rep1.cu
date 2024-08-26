@@ -112,3 +112,29 @@ __global__ void dot_product_vec4(float* a, float* b, float *out) {
     float output = block_reduce_add(val);
     if (tid == 0) out[0] = output;
 }
+
+/*1.4 histgram*/
+
+// block(256)
+// grid([N/256])
+// a: Nx1, out: counted hisgram
+__global__ void histgram_base(int* a, int* out, int N) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < N) atomicAdd(&out[a[idx]], 1);
+}
+
+
+// block(256)
+// grid([N / (256*4)])
+// a: Nx1, out: counted histgram
+__global__ void histgram_vec4(int* a, int* out, int N) {
+    const int idx = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
+    if (idx < N) {
+        float4 reg_a = FETCH_FLOAT4(a[idx]);
+        atomicAdd(&out[reg_a.x], 1);
+        atomicAdd(&out[reg_a.y], 1);
+        atomicAdd(&out[reg_a.z], 1);
+        atomicAdd(&out[reg_a.w], 1)
+    }
+}
+
