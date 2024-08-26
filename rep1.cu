@@ -54,4 +54,44 @@ __global__ void dot_vec4(float* a, float* b, float* out) {
     FETCH_FLOAT4(out[idx]) = reg_out;
 }
 
+/*1.3 dot product pro: 先求点积再求和，相较1.2多了求和的过程*/
+template <const int WarpSize=32>
+__device__ int warp_reduce_add(float val) {
+    #pragma unroll
+    for (int mask=WarpSize>>1; mask >= 1; mask>>=1) {
+        val += __shfl_xor_sync(0xffffffff, val, mask);
+    }
+    return val;
+}
+template <const int NUM_THREADS,
+        const int WarpSize
+        >
+__device__ block_reduce_add(float val) {
+
+    
+    const int tid = threadIdx.x;
+    const int idx = blockIdx.x * blockDim.x + tid;
+    const int warp_idx = tid / WarpSize;
+    const int lane_idx = tid % WarpSize;
+
+    const int NUM_WARPS = (NUM_THREADS + WarpSize - 1) / WarpSize;
+    __shared__ float sdata[NUM_WAPRS];
+    val = warp_reduce_add(val);
+    sdata[warp_idx] = val;
+
+    val = (lane < NUM_WAPRS) ? sdata[lane]:0.;
+    if (warp_idx == 0) val = warp_reduce_add(val);
+    return val;
+}
+
+// block(256)
+// grid([N/256])
+// a: Nx1, b:Nx1, out:1
+template <const int N>
+__global__ void dot_product_base(float* a, float* b, float* out) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    val = a[idx] * b[idx];
+    float output = block_reduce_add(val);
+    if (tid == 0) out[0] = output;
+}
 
