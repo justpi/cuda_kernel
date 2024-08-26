@@ -90,8 +90,25 @@ __device__ block_reduce_add(float val) {
 template <const int N>
 __global__ void dot_product_base(float* a, float* b, float* out) {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    val = a[idx] * b[idx];
+    float val = a[idx] * b[idx];
     float output = block_reduce_add(val);
     if (tid == 0) out[0] = output;
 }
 
+// block(256)
+// grid([N/ 256*4])
+// a: Nx1, b: Nx1, out:1
+template <const int N> 
+__global__ void dot_product_vec4(float* a, float* b, float *out) {
+    const int idx = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
+    float4 reg_out;
+    float4 reg_a = FETCH_FLOAT4(a[idx]);
+    float4 reg_b = FETCH_FLOAT4(b[idx]);
+    reg_out.x = reg_a.x * reg_b.x;
+    reg_out.y = reg_a.y * reg_b.y;
+    reg_out.z = reg_a.z * reg_b.z;
+    reg_out.w = reg_a.w * reg_b.w;
+    float val = reg.x + reg_out.y + reg_out.z + reg_out.w;
+    float output = block_reduce_add(val);
+    if (tid == 0) out[0] = output;
+}
