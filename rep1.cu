@@ -55,6 +55,8 @@ __global__ void dot_vec4(float* a, float* b, float* out) {
 }
 
 /*1.3 dot product pro: 先求点积再求和，相较1.2多了求和的过程*/
+
+// 每个warp计算的reduce sum，使用__shfl_xor_sync原语进行一个warp内的线程通信
 template <const int WarpSize=32>
 __device__ int warp_reduce_add(float val) {
     #pragma unroll
@@ -63,6 +65,8 @@ __device__ int warp_reduce_add(float val) {
     }
     return val;
 }
+
+// 每个block的reduce sum计算方法，使用多个warp进行block的计算
 template <const int NUM_THREADS,
         const int WarpSize
         >
@@ -77,10 +81,10 @@ __device__ block_reduce_add(float val) {
     const int NUM_WARPS = (NUM_THREADS + WarpSize - 1) / WarpSize;
     __shared__ float sdata[NUM_WAPRS];
     val = warp_reduce_add(val);
-    sdata[warp_idx] = val;
+    if(lane == 0) sdata[warp_idx] = val;
 
     val = (lane < NUM_WAPRS) ? sdata[lane]:0.;
-    if (warp_idx == 0) val = warp_reduce_add(val);
+    val = warp_reduce_add(val);
     return val;
 }
 
@@ -137,4 +141,38 @@ __global__ void histgram_vec4(int* a, int* out, int N) {
         atomicAdd(&out[reg_a.w], 1)
     }
 }
+
+
+/*1.5 sigmoid*/
+
+__device__ __forceinline__ float sigmoid_function(float x) {
+    return (1.0f / expf(-x) + 1.0f);
+}
+// block(256)
+// grid([N/256])
+// x: Nx1, y: Nx1
+__global__ void sigmoid_base(float *x, float *y, int N) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < N) {
+        y[idx] = sigmoid_function(x[idx]);
+    }
+}
+
+// block(256 / 4)
+// grid([N/256])
+// x: Nx1, y: Nx1
+__global__ void sigmoid_vec4(float *x, float *y, int N) {
+    const int idx = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
+    if (idx < N) {
+        float4 reg_x = FETCH_FLOAT4(x[idx]);
+        FETCH_FLOAT4(y[idx]) = {
+            sigmoid_function(reg_x.x),
+            sigmoid_function(reg_x.y),
+            sigmoid_function(reg_x.z),
+            sigmoid_function(reg_x.w)
+        }
+    }
+}
+
+/*1.6 relu*/
 
