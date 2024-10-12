@@ -170,9 +170,42 @@ __global__ void sigmoid_vec4(float *x, float *y, int N) {
             sigmoid_function(reg_x.y),
             sigmoid_function(reg_x.z),
             sigmoid_function(reg_x.w)
-        }
+        };
     }
 }
 
 /*1.6 relu*/
 
+__device__ __forceinline__ float relu_function(float x) {
+    return fmaxf(0.0f, x);
+}
+
+__device__ forceinline__ float leaky_relu_function(float x) {
+    return fmaxf(0.1f * x, x);
+}
+
+// block(256)
+// grid([N/256])
+// x: Nx1, y: Nx1
+__global__ void relu_base(float* x, float* y, int N) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < N) {
+        y[idx] = relu_function(x[idx]);
+    }
+}
+
+// block(256/4)
+// grid([N/256])
+// x: Nx1, y: Nx1
+__global__ void relu_vec4(float* x, float* y, int N) {
+    const int idx = (blockIdx.x * blockDim.x + threadIdx.x);
+    if (idx < N) {
+        float4 reg_x = FETCH_FLOAT4(x[idx]);
+        FETCH_FLOAT4(y[idx]) = {
+            relu_function(reg_x.x),
+            relu_function(reg_x.y),
+            relu_function(reg_x.z),
+            relu_function(reg_x.w),
+        };
+    } 
+}
