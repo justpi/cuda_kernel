@@ -209,3 +209,34 @@ __global__ void relu_vec4(float* x, float* y, int N) {
         };
     } 
 }
+
+
+
+/* 2.transpose */
+#define OFFSET(row, col, ld) ((row) * (ld) + (col))
+// block(32， 32)
+// grid(M/32, N/32)
+// x: MxN, y: NxM
+__global__ void transpose_base(float* a, float* b, int M, int N) {
+    const int idx_x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int idx_y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (idx_x < M)
+    b[OFFSET(idx_x, idx_y, M)] = a[OFFSET(idx_y, idx_x, N)];
+}
+
+// block(32, 32) 
+// grid(M/32, N/32)
+// x: MxN, y: NxM
+template<int BLOCK_SIZE>
+__global__ void transpose_shared(float* a, float* b, int M, int N) {    // 运行时传入M, N，适用与M, N未知的情况
+    const int idx_x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int idx_y = blockIdx.y * blockDim.y + threadIdx.y;
+    __shared__ float sdata[BLOCK_SIZE][BLOCK_SIZE];
+    sdata[threadIdx.y][threadIdx.x] = a[OFFSET(idx_y, idx_x, N)];
+    __syncthreads();
+    b[OFFSET(idx_x, idx_y, M)] = sdata[threadIdx.x][threadIdx.y];
+}
+
+
+/*3. reduce*/
+
