@@ -240,3 +240,148 @@ __global__ void transpose_shared(float* a, float* b, int M, int N) {    // 运�
 
 /*3. reduce*/
 
+// block(256)
+// grid([N/256])
+// x: Nx1, y: 256
+template <THREADS_PER_BLOCK>
+__global__ void reduce_base(float* x, float* y) {
+    /* 每个block计算256个数，一共多次迭代 */
+    __shared__ float sdata[THREADS_PER_BLOCK];
+
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int tidx = threadIdx.x;
+    // global mem -> shared mem
+    sdata[tidx] = x[idx];
+    __syncthreads();
+
+    // reduce 操作
+    for (int s=1; s < blockDim.x; s*=2) {
+        if (tidx %(2*s) == 0) {
+            sdata[tidx] += sdata[s + tidx];
+        }
+        __syncthreads();
+    }
+    if (tidx == 0) y[blockIdx.x] = sdata[0];
+
+}
+
+// block(256)
+// grid([N/256])
+// x: Nx1, y: 256
+template <THREADS_PER_BLOCK>
+__global__ void reduce_divergence(float* x, float* y) {
+    /* 通过改进索引方式，提高warp的线程利用率 */
+    __shared__ float sdata[THREADS_PER_BLOCK];
+
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int tidx = threadIdx.x;
+    // global mem -> shared mem
+    sdata[tidx] = x[idx];
+    __syncthreads();
+
+    // reduce 操作
+    for (int s=1; s < blockDim.x; s*=2) {
+        int index = 2*s*tidx;   // 
+        if (index < blockDim.x) {
+            sdata[index] += sdata[index + s];
+        }
+        __syncthreads();
+    }
+    if (tidx == 0) y[blockIdx.x] = sdata[0];
+
+}
+
+
+// block(256)
+// grid([N/256])
+// x: Nx1, y: 256
+template <THREADS_PER_BLOCK>
+__global__ void reduce_divergence(float* x, float* y) {
+    /* 索引方式会引起共享内存的bank冲突 */
+    __shared__ float sdata[THREADS_PER_BLOCK];
+
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int tidx = threadIdx.x;
+    // global mem -> shared mem
+    sdata[tidx] = x[idx];
+    __syncthreads();
+
+    // reduce 操作
+    for (int s=blockDim.x; s > 0; s>>=1) { 
+        if (tidx < s) {
+            sdata[tidx] += sdata[tidx + s];
+        }
+        __syncthreads();
+    }
+    if (tidx == 0) y[blockIdx.x] = sdata[0];
+
+}
+
+
+// block(256)
+// grid([N/(256*2)])
+// x: Nx1, y: 256
+template <int THREADS_PER_BLOCK>
+__global__ void reduce_divergence(float* x, float* y) {
+    /* 提高计算密度 */
+    __shared__ float sdata[THREADS_PER_BLOCK];
+
+    const int idx = blockIdx.x * (blockDim.x*2) + threadIdx.x;
+    const int tidx = threadIdx.x;
+    // global mem -> shared mem
+    sdata[tidx] = x[idx] + x[idx + blockDim.x];
+    __syncthreads();
+
+    // reduce 操作
+    for (int s=blockDim.x; s > 0; s>>=1) { 
+        if (tidx < s) {
+            sdata[tidx] += sdata[tidx + s];
+        }
+        __syncthreads();
+    }
+    if (tidx == 0) y[blockIdx.x] = sdata[0];
+
+}
+
+// block(1024)
+// grid([N/1024])
+// x: Nx1, y:1
+__device__ __forceinline__ float warp_reduce_sum(float val) {
+    #pragma unroll
+    for (int mask=32>>1; mask >=0; mask >>=1) {
+        val += __shfl_xor_sync(0xffffffff, val, mask);
+    }
+    return val;
+}
+
+template<int BLOCK_SIZE,
+         int kWarpSize=32
+        >
+__device__ float block_reduce_sum(float val) {
+    const int NUM_WARPS = (BLOCK_SIZE + kWarpSize - 1) / kWarpSize;
+    const int warp_idx = threadIdx.x / kWarpSize;
+    const int lane_idx = threadIdx.x % kWarpSize;
+    __shared__ float sdata[NUM_WARPS];
+
+    // 先计算一次sum，将计算得到的结果放入sdata中
+    val = warp_reduce_sum(val);
+    if (lane_idx == 0) sdata[warp_idx] = val;
+    __syncthreads();
+
+    // 将sdata中的结果进一步reduce，只有第一个warp会进行计算
+    val = (lane_idx < NUM_WARPS) ? shared[lane_idx]: 0.0f;
+    val = warp_reduce_sum<NUM_WARPS>(val);
+    return val;
+
+}
+//block(1024)
+// grid([N/1024])
+// x: Nx1, y: Nx1, 使用shfl指令完成reduce计算
+__global__ void reduce_sum(float* x, float* y) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int tidx = threadIdx.x;
+    float val = x[idx];
+    val = block_reduce_sum(val);
+    if (tidx == 0) atomicAdd(y, val);
+}
+
